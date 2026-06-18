@@ -421,7 +421,7 @@ function drawHud(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: 
   const nearShop = Math.hypot(player.pos.x - SHOP_POS.x, player.pos.y - SHOP_POS.y) < 180;
   const hint = nearShop
     ? 'E \u5546\u5E97   P \u4E70\u836F'
-    : compact ? '\u6447\u6746\u79FB\u52A8  \u653B\u51FB  \u6280\u80FD  \u80CC\u5305' : 'WASD \u79FB\u52A8  SPACE \u653B\u51FB  1/2/3 \u6280\u80FD  I \u80CC\u5305  S \u4FDD\u5B58';
+    : compact ? '\u6447\u6746\u79FB\u52A8  \u653B\u51FB  \u6280\u80FD  \u80CC\u5305' : 'WASD \u79FB\u52A8  SPACE \u653B\u51FB  1/2/3 \u6280\u80FD  I \u80CC\u5305  S \u4FDD\u5B58  R \u91CD\u7F6E';
   text(ctx, hint, 14, h - 22, T3, compact ? 10 : 11);
 
   drawSkills(ctx, state, w, h);
@@ -974,6 +974,8 @@ function drawTouchControls(ctx: CanvasRenderingContext2D, move: { x: number; y: 
   ctx.fill();
 
   // Buttons
+  const rstLabel = state.resetConfirm ? '确认' : 'RST';
+  const rstColor = state.resetConfirm ? WARN : T3;
   const buttons: TouchButton[] = compact
     ? [
         // Skills — right column, evenly spaced
@@ -986,7 +988,8 @@ function drawTouchControls(ctx: CanvasRenderingContext2D, move: { x: number; y: 
         ['BAG', w - 40, 128, 22, SUCCESS],
         ['E', w - 92, 128, 22, GOLD],
         ['USE', w - 144, 128, 22, ACCENT],
-        ['P', w - 196, 128, 22, WARN]
+        ['P', w - 196, 128, 22, WARN],
+        [rstLabel, w - 248, 128, 22, rstColor]
       ]
     : [
         ['1', w - 170, h - 120, 32, '#FF9F0A'],
@@ -996,7 +999,8 @@ function drawTouchControls(ctx: CanvasRenderingContext2D, move: { x: number; y: 
         ['BAG', w - 58, 56, 24, SUCCESS],
         ['E', w - 116, 56, 24, GOLD],
         ['USE', w - 174, 56, 24, ACCENT],
-        ['P', w - 232, 56, 24, WARN]
+        ['P', w - 232, 56, 24, WARN],
+        [rstLabel, w - 290, 56, 24, rstColor]
       ];
 
   for (const [label, x, y, r, color] of buttons) {

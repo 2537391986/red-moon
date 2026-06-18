@@ -120,7 +120,8 @@ function createState(): GameState {
     particles: [],
     slashes: [],
     ui: { panel: isNewGame ? 'classSelect' : 'none', selectedIndex: 0, scroll: 0 },
-    showHelp: !isNewGame
+    showHelp: !isNewGame,
+    resetConfirm: false
   };
 }
 
@@ -134,6 +135,7 @@ export class Game {
   private saveTimer = 0;
   private prevPointerY = 0;
   private scrollVelocity = 0;
+  private resetConfirmTimer = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d');
@@ -169,6 +171,8 @@ export class Game {
   private update(dt: number): void {
     const state = this.state;
     state.time += dt;
+    if (this.resetConfirmTimer > 0) this.resetConfirmTimer = Math.max(0, this.resetConfirmTimer - dt);
+    state.resetConfirm = this.resetConfirmTimer > 0;
     this.input.uiBlocking = state.ui.panel !== 'none';
     this.input.update();
     this.handleActions();
@@ -227,12 +231,18 @@ export class Game {
       this.say('已手动保存。');
     }
 
-    // Reset
+    // Reset (double-tap confirmation)
     if (this.input.consume('r')) {
-      clearSave();
-      this.state = createState();
-      this.say('已重开新档。');
-      return;
+      if (this.resetConfirmTimer > 0) {
+        clearSave();
+        this.state = createState();
+        this.resetConfirmTimer = 0;
+        this.say('已重开新档。');
+        return;
+      } else {
+        this.resetConfirmTimer = 3;
+        this.say('再按一次 R 确认重置游戏！');
+      }
     }
 
     // Death

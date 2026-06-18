@@ -120,7 +120,8 @@ export class Input {
           { action: 'i', x: w - 40, y: 128, r: 22 },
           { action: 'e', x: w - 92, y: 128, r: 22 },
           { action: 'enter', x: w - 144, y: 128, r: 22 },
-          { action: 'p', x: w - 196, y: 128, r: 22 }
+          { action: 'p', x: w - 196, y: 128, r: 22 },
+          { action: 'r', x: w - 248, y: 128, r: 22 }
         ]
       : [
           { action: '1', x: w - 170, y: h - 120, r: 32 },
@@ -130,7 +131,8 @@ export class Input {
           { action: 'i', x: w - 58, y: 56, r: 24 },
           { action: 'e', x: w - 116, y: 56, r: 24 },
           { action: 'enter', x: w - 174, y: 56, r: 24 },
-          { action: 'p', x: w - 232, y: 56, r: 24 }
+          { action: 'p', x: w - 232, y: 56, r: 24 },
+          { action: 'r', x: w - 290, y: 56, r: 24 }
         ];
     for (const button of buttons) {
       if (Math.hypot(x - button.x, y - button.y) <= button.r) return button.action;

@@ -230,4 +230,5 @@ export type GameState = {
   slashes: SlashEffect[];
   ui: UiState;
   showHelp: boolean;
+  resetConfirm: boolean;
 };
