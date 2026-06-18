@@ -30,7 +30,7 @@ export type SlashEffect = {
 
 export type Rarity = '普通' | '精良' | '稀有' | '史诗' | '传说';
 export type EquipSlot = 'weapon' | 'armor' | 'helmet' | 'necklace' | 'ring';
-export type ItemType = 'equipment' | 'potion';
+export type ItemType = 'equipment' | 'potion' | 'skillBook';
 
 export type Stats = {
   maxHp: number;
@@ -38,6 +38,20 @@ export type Stats = {
   defense: number;
   crit: number;
   lifeSteal: number;
+};
+
+/* ---- 词条系统 ---- */
+export type AffixDef = {
+  id: string;
+  name: string;
+  description: string;       // 用 {v} 作数值占位符
+  minRarity: Rarity;
+  weight: number;
+};
+
+export type Affix = {
+  id: string;
+  value: number;
 };
 
 export type EquipmentItem = {
@@ -48,6 +62,7 @@ export type EquipmentItem = {
   rarity: Rarity;
   level: number;
   stats: Partial<Stats>;
+  affixes: Affix[];
   price: number;
 };
 
@@ -59,7 +74,15 @@ export type PotionItem = {
   price: number;
 };
 
-export type Item = EquipmentItem | PotionItem;
+export type SkillBookItem = {
+  id: string;
+  type: 'skillBook';
+  name: string;
+  skillId: string;
+  price: number;
+};
+
+export type Item = EquipmentItem | PotionItem | SkillBookItem;
 
 export type Skill = {
   id: string;
@@ -70,6 +93,45 @@ export type Skill = {
   radius: number;
   multiplier: number;
   color: string;
+  style?: 'line' | 'arc' | 'lightning';
+};
+
+/* ---- 技能/职业/天赋 定义 ---- */
+export type SkillDef = {
+  id: string;
+  name: string;
+  description: string;
+  cooldown: number;
+  range: number;
+  radius: number;
+  multiplier: number;
+  color: string;
+  style: 'line' | 'arc' | 'lightning';
+  tier: number;
+  requiredClass?: string;
+  dropFrom?: MonsterKind[];
+};
+
+export type TalentEffect =
+  | { kind: 'skill_boost'; skillId: string; stat: 'multiplier' | 'range' | 'cooldown'; value: number }
+  | { kind: 'stat_boost'; stat: keyof Stats; value: number }
+  | { kind: 'unlock_skill'; skillId: string };
+
+export type TalentNode = {
+  id: string;
+  name: string;
+  description: string;
+  maxRank: number;
+  requires?: string[];
+  effect: TalentEffect;
+};
+
+export type ClassDef = {
+  id: string;
+  name: string;
+  description: string;
+  starterSkills: string[];
+  talents: string[];
 };
 
 export type Player = {
@@ -88,6 +150,10 @@ export type Player = {
   alive: boolean;
   invincible: boolean;
   invTimer: number;
+  playerClass?: string;
+  talentPoints: number;
+  talents: Record<string, number>;
+  regenTimer: number;
 };
 
 export type MonsterKind = '稻草人' | '半兽人' | '骷髅战士' | '沃玛卫士' | '赤月恶魔';
@@ -140,7 +206,7 @@ export type FloatingText = {
   ttl: number;
 };
 
-export type UiPanel = 'none' | 'bag' | 'shop' | 'itemDetail';
+export type UiPanel = 'none' | 'bag' | 'shop' | 'itemDetail' | 'classSelect' | 'talents';
 
 export type UiState = {
   panel: UiPanel;

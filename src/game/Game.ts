@@ -1,10 +1,11 @@
 import { MONSTER_BASE } from '../data/tables';
-import { RESPAWN_POS, STARTER_SKILLS, WORLD } from '../data/world';
-import { makeDrops, makeEquipment, makePotion, uid } from '../systems/loot';
+import { CLASSES, SKILL_DEFS, TALENTS } from '../data/skills';
+import { RESPAWN_POS, WORLD } from '../data/world';
+import { makeDrops, makePotion, uid } from '../systems/loot';
 import { clearSave, loadGame, saveGame, totalStats } from '../systems/save';
 import { Input } from './input';
 import { render } from './render';
-import type { AttackAction, Drop, EquipmentItem, GameState, Monster, MonsterKind, Player, Skill, Vec2 } from './types';
+import type { AttackAction, Drop, GameState, Monster, MonsterKind, Player, Skill, SkillBookItem, Vec2 } from './types';
 
 function dist(a: { x: number; y: number }, b: { x: number; y: number }): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -24,11 +25,6 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function makePlayer(): Player {
-  const weapon = makeEquipment(1) as EquipmentItem;
-  weapon.name = '新手木剑';
-  weapon.rarity = '普通';
-  weapon.stats = { attack: 5 };
-  weapon.price = 5;
   return {
     pos: { ...RESPAWN_POS },
     hp: 130,
@@ -37,14 +33,18 @@ function makePlayer(): Player {
     nextExp: 60,
     gold: 80,
     base: { maxHp: 130, attack: 12, defense: 3, crit: 0.05, lifeSteal: 0 },
-    equipment: { weapon },
+    equipment: {},
     inventory: [makePotion(1), makePotion(1)],
     attackCooldown: 0,
     facing: { x: 1, y: 0 },
     action: null,
     alive: true,
     invincible: false,
-    invTimer: 0
+    invTimer: 0,
+    playerClass: undefined,
+    talentPoints: 0,
+    talents: {},
+    regenTimer: 0
   };
 }
 
@@ -101,21 +101,25 @@ function createState(): GameState {
   player.action = null;
   player.invincible ??= false;
   player.invTimer ??= 0;
+  player.talentPoints ??= 0;
+  player.talents ??= {};
+  player.regenTimer ??= 0;
+  const isNewGame = !loaded;
   return {
     player,
     monsters: createMonsters(),
     drops: [],
-    skills: loaded?.skills ?? STARTER_SKILLS.map((skill) => ({ ...skill })),
+    skills: loaded?.skills ?? [],
     floats: [],
-    message: '欢迎来到赤月孤城：WASD/方向键移动，空格攻击，1/2/3 技能，I 背包，E 商店。',
+    message: isNewGame ? '选择你的职业开始冒险！' : '欢迎来到赤月孤城：WASD/方向键移动，空格攻击，1/2/3 技能，I 背包，E 商店，T 天赋。',
     messageTimer: 8,
     time: loaded?.time ?? 0,
     camera: { x: 0, y: 0 },
     shake: 0,
     particles: [],
     slashes: [],
-    ui: { panel: 'none', selectedIndex: 0, scroll: 0 },
-    showHelp: true
+    ui: { panel: isNewGame ? 'classSelect' : 'none', selectedIndex: 0, scroll: 0 },
+    showHelp: !isNewGame
   };
 }
 
@@ -201,6 +205,18 @@ export class Game {
         ui.panel = 'none';
       } else if (dist(state.player.pos, RESPAWN_POS) < 190) {
         ui.panel = 'shop';
+      }
+    }
+
+    // Toggle talents
+    if (this.input.consume('t')) {
+      if (ui.panel === 'talents') {
+        ui.panel = 'none';
+      } else if (state.player.playerClass) {
+        ui.panel = 'talents';
+        ui.scroll = 0;
+      } else {
+        this.say('请先选择职业。');
       }
     }
 
@@ -359,6 +375,16 @@ export class Game {
       if (player.invTimer <= 0) player.invincible = false;
     }
     if (player.hp <= 0) player.alive = false;
+    // 词条: 生命回复 (hp_regen) — 每秒回复
+    const regenValue = this.getAffixTotal('hp_regen');
+    if (regenValue > 0 && player.hp > 0) {
+      player.regenTimer += dt;
+      if (player.regenTimer >= 1) {
+        player.regenTimer -= 1;
+        const maxHp = totalStats(player).maxHp;
+        player.hp = Math.min(maxHp, player.hp + regenValue);
+      }
+    }
   }
 
   private updateActions(dt: number): void {
@@ -559,10 +585,21 @@ export class Game {
     if (!skill) return;
     const target = this.state.monsters.find((monster) => monster.id === targetId && monster.hp > 0) ?? this.nearestLiving(skill.range);
     if (!target) return;
-    const styles: Array<'line' | 'arc' | 'lightning'> = ['line', 'lightning', 'arc'];
-    this.addSlash(this.state.player.pos, target.pos, skill.color, index === 1 ? '|' : index === 2 ? ')' : '>', styles[index] ?? 'line');
+    const slashStyle = skill.style ?? 'line';
+    const slashChar = slashStyle === 'lightning' ? '|' : slashStyle === 'arc' ? ')' : '>';
+    this.addSlash(this.state.player.pos, target.pos, skill.color, slashChar, slashStyle);
+    // 天赋 skill_boost 加成
+    let multBonus = 0;
+    for (const [tid, rank] of Object.entries(this.state.player.talents)) {
+      if (rank <= 0) continue;
+      const node = TALENTS[tid];
+      if (node?.effect.kind === 'skill_boost' && node.effect.skillId === skill.id && node.effect.stat === 'multiplier') {
+        multBonus += node.effect.value * rank;
+      }
+    }
+    const effectiveMultiplier = skill.multiplier * (1 + multBonus);
     for (const monster of this.state.monsters) {
-      if (monster.hp > 0 && dist(monster.pos, target.pos) <= skill.radius) this.hitMonster(monster, skill.multiplier, index + 1);
+      if (monster.hp > 0 && dist(monster.pos, target.pos) <= skill.radius) this.hitMonster(monster, effectiveMultiplier, index + 1);
     }
     this.say(`释放 ${skill.name}`);
   }
@@ -577,9 +614,23 @@ export class Game {
       this.float('MISS', player.pos.x, player.pos.y - 28, 'rgba(255,255,255,0.4)');
       return;
     }
+    // 词条: 闪避 (dodge)
+    const dodgeChance = this.getAffixPercent('dodge');
+    if (dodgeChance > 0 && Math.random() * 100 < dodgeChance) {
+      this.float('闪避', player.pos.x, player.pos.y - 28, '#79e07d');
+      return;
+    }
     const playerStats = totalStats(player);
     const damage = Math.max(1, monster.attack - playerStats.defense + Math.floor(Math.random() * 6));
     player.hp -= damage;
+    // 词条: 荆棘 (thorns) — 反弹伤害
+    const thornsPercent = this.getAffixPercent('thorns');
+    if (thornsPercent > 0) {
+      const reflect = Math.max(1, Math.round(damage * thornsPercent / 100));
+      monster.hp -= reflect;
+      this.float(`荆棘-${reflect}`, monster.pos.x, monster.pos.y - monster.radius, '#c57cff');
+      if (monster.hp <= 0) this.killMonster(monster);
+    }
     // Grant i-frames after being hit (0.5s)
     player.invincible = true;
     player.invTimer = 0.5;
@@ -599,7 +650,17 @@ export class Game {
   private hitMonster(monster: Monster, multiplier: number, skillIndex: number): void {
     const stats = totalStats(this.state.player);
     const crit = Math.random() < stats.crit;
-    const raw = Math.round((stats.attack * multiplier + Math.random() * stats.attack * 0.35) * (crit ? 1.8 : 1));
+    let raw = Math.round((stats.attack * multiplier + Math.random() * stats.attack * 0.35) * (crit ? 1.8 : 1));
+    // 词条: 暴击强化 (crit_damage) — 暴击时额外百分比伤害
+    if (crit) {
+      const critBonus = this.getAffixPercent('crit_damage');
+      if (critBonus > 0) raw = Math.round(raw * (1 + critBonus / 100));
+    }
+    // 词条: 斩杀 (execute) — 目标低血量时伤害加成
+    const executePercent = this.getAffixPercent('execute');
+    if (executePercent > 0 && monster.hp < monster.maxHp * 0.3) {
+      raw = Math.round(raw * (1 + executePercent / 100));
+    }
     const damage = Math.max(1, raw - monster.defense);
     monster.hp -= damage;
     monster.hitstun = monster.boss ? 0.2 : 0.12;
@@ -611,11 +672,23 @@ export class Game {
     monster.vel.y += (dy / length) * (90 + damage * 2.5);
     this.state.shake = Math.min(1.4, this.state.shake + (monster.boss ? 0.55 : 0.28));
     this.spawnParticles(monster.pos.x, monster.pos.y, crit ? '#ffd166' : '#d8f3ff', crit ? 14 : 8);
-    if (stats.lifeSteal > 0) {
-      this.state.player.hp = Math.min(stats.maxHp, this.state.player.hp + Math.ceil(damage * stats.lifeSteal));
+    // 词条: 吸血强化 (lifesteal_boost)
+    let effectiveLifeSteal = stats.lifeSteal;
+    const lsBoost = this.getAffixPercent('lifesteal_boost');
+    if (lsBoost > 0) effectiveLifeSteal *= (1 + lsBoost / 100);
+    if (effectiveLifeSteal > 0) {
+      this.state.player.hp = Math.min(stats.maxHp, this.state.player.hp + Math.ceil(damage * effectiveLifeSteal));
     }
     if (skillIndex) this.burst(monster.pos.x, monster.pos.y, this.state.skills[skillIndex - 1]);
     if (monster.hp <= 0) this.killMonster(monster);
+    // 词条: 连击 (double_strike) — 概率追加普攻
+    const doubleStrikeChance = this.getAffixPercent('double_strike');
+    if (doubleStrikeChance > 0 && Math.random() * 100 < doubleStrikeChance && monster.hp > 0) {
+      const extraDmg = Math.max(1, Math.round(stats.attack * 0.8) - monster.defense);
+      monster.hp -= extraDmg;
+      this.float(`连击-${extraDmg}`, monster.pos.x, monster.pos.y - monster.radius - 16, '#6fffd2');
+      if (monster.hp <= 0) this.killMonster(monster);
+    }
   }
 
   private killMonster(monster: Monster): void {
@@ -633,8 +706,9 @@ export class Game {
       player.base.maxHp += 18;
       player.base.attack += 3;
       player.base.defense += 1;
+      player.talentPoints += 1;
       player.hp = totalStats(player).maxHp;
-      this.say(`升级到 ${player.level} 级！属性提升。`);
+      this.say(`升级到 ${player.level} 级！获得1天赋点。`);
     }
   }
 
@@ -650,6 +724,17 @@ export class Game {
       this.say(`拾取 ${drop.gold} 金币。`);
     }
     if (drop.item) {
+      // 技能书: 直接学习或拾取
+      if (drop.item.type === 'skillBook') {
+        const book = drop.item as SkillBookItem;
+        const alreadyKnown = this.state.skills.some((s) => s.id === book.skillId);
+        if (alreadyKnown) {
+          this.say(`已掌握 ${SKILL_DEFS[book.skillId]?.name ?? book.skillId}，跳过。`);
+          return;
+        }
+        this.learnSkill(book.skillId);
+        return;
+      }
       if (player.inventory.length >= 28) {
         this.say('背包已满，无法拾取。');
         return;
@@ -667,6 +752,63 @@ export class Game {
 
     // Death screen: any tap revives
     if (!state.player.alive) { this.revive(); return; }
+
+    // Class select panel
+    if (ui.panel === 'classSelect') {
+      const classIds = Object.keys(CLASSES);
+      const cardW = Math.min(260, w - 40);
+      const cardH = 100;
+      const gap = 14;
+      const totalH = classIds.length * cardH + (classIds.length - 1) * gap;
+      const startY = (h - totalH) / 2;
+      const startX = (w - cardW) / 2;
+      for (let i = 0; i < classIds.length; i++) {
+        const cy = startY + i * (cardH + gap);
+        if (x >= startX && x <= startX + cardW && y >= cy && y <= cy + cardH) {
+          this.selectClass(classIds[i]);
+          return;
+        }
+      }
+      return;
+    }
+
+    // Talents panel
+    if (ui.panel === 'talents') {
+      const panelW = Math.min(360, w - 24);
+      const panelH = Math.min(460, h - 80);
+      const px = (w - panelW) / 2;
+      const py = (h - panelH) / 2;
+
+      // Outside panel → close
+      if (x < px || x > px + panelW || y < py || y > py + panelH) {
+        ui.panel = 'none';
+        return;
+      }
+
+      // Close button
+      if (x >= px + panelW - 32 && x <= px + panelW - 8 && y >= py + 6 && y <= py + 30) {
+        ui.panel = 'none';
+        return;
+      }
+
+      // Talent node buttons — each row is 44px tall starting at py + 60
+      const rowH = 44;
+      const nodeStartY = py + 60;
+      const classId = state.player.playerClass;
+      if (classId) {
+        const talentIds = CLASSES[classId]?.talents ?? [];
+        for (let i = 0; i < talentIds.length; i++) {
+          const btnY = nodeStartY + i * rowH;
+          // Allocate button: right side of row, 56px wide
+          const btnX = px + panelW - 72;
+          if (x >= btnX && x <= btnX + 56 && y >= btnY && y <= btnY + 34) {
+            this.allocateTalent(talentIds[i]);
+            return;
+          }
+        }
+      }
+      return;
+    }
 
     // Item detail panel is open
     if (ui.panel === 'itemDetail') {
@@ -808,6 +950,15 @@ export class Game {
       player.hp = Math.min(stats.maxHp, player.hp + item.heal);
       player.inventory.splice(this.state.ui.selectedIndex, 1);
       this.say(`使用 ${item.name}，恢复 ${item.heal} HP`);
+    } else if (item.type === 'skillBook') {
+      const book = item as SkillBookItem;
+      const alreadyKnown = this.state.skills.some((s) => s.id === book.skillId);
+      if (alreadyKnown) {
+        this.say(`已掌握该技能。`);
+      } else {
+        this.learnSkill(book.skillId);
+      }
+      player.inventory.splice(this.state.ui.selectedIndex, 1);
     } else {
       const old = player.equipment[item.slot];
       player.equipment[item.slot] = item;
@@ -922,6 +1073,85 @@ export class Game {
   private say(message: string): void {
     this.state.message = message;
     this.state.messageTimer = 4;
+  }
+
+  /* ---- 职业 / 技能 / 天赋 ---- */
+
+  selectClass(classId: string): void {
+    const cls = CLASSES[classId];
+    if (!cls) return;
+    const player = this.state.player;
+    player.playerClass = classId;
+    player.talents = {};
+    player.talentPoints = 1; // 选职业送1点天赋
+    // 学习初始技能
+    for (const skillId of cls.starterSkills) this.learnSkill(skillId);
+    this.state.ui.panel = 'none';
+    this.say(`选择了 ${cls.name}！获得初始技能和1天赋点。`);
+  }
+
+  private learnSkill(skillId: string): void {
+    const def = SKILL_DEFS[skillId];
+    if (!def) return;
+    if (this.state.skills.some((s) => s.id === skillId)) return;
+    const skill: Skill = {
+      id: def.id,
+      name: def.name,
+      cooldown: def.cooldown,
+      remaining: 0,
+      range: def.range,
+      radius: def.radius,
+      multiplier: def.multiplier,
+      color: def.color,
+      style: def.style,
+    };
+    this.state.skills.push(skill);
+    this.say(`学会了 ${def.name}！`);
+  }
+
+  allocateTalent(talentId: string): void {
+    const player = this.state.player;
+    if (player.talentPoints <= 0) {
+      this.say('天赋点不足。');
+      return;
+    }
+    const node = TALENTS[talentId];
+    if (!node) return;
+    const current = player.talents[talentId] ?? 0;
+    if (current >= node.maxRank) {
+      this.say(`${node.name} 已满级。`);
+      return;
+    }
+    // 检查前置
+    if (node.requires) {
+      for (const req of node.requires) {
+        if (!player.talents[req] || player.talents[req] <= 0) {
+          const reqNode = TALENTS[req];
+          this.say(`需要先解锁 ${reqNode?.name ?? req}。`);
+          return;
+        }
+      }
+    }
+    player.talents[talentId] = current + 1;
+    player.talentPoints -= 1;
+    this.say(`${node.name} 升至 ${current + 1}/${node.maxRank} 级。`);
+  }
+
+  /* ---- 词条辅助 ---- */
+
+  private getAffixTotal(affixId: string): number {
+    let total = 0;
+    for (const item of Object.values(this.state.player.equipment)) {
+      if (!item?.affixes) continue;
+      for (const affix of item.affixes) {
+        if (affix.id === affixId) total += affix.value;
+      }
+    }
+    return total;
+  }
+
+  private getAffixPercent(affixId: string): number {
+    return this.getAffixTotal(affixId);
   }
 
   private resize(): void {

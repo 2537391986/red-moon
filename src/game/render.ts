@@ -1,7 +1,8 @@
 import { SHOP_POS, WORLD, ZONES } from '../data/world';
-import { SLOT_NAMES } from '../data/tables';
+import { AFFIX_DEFS, SLOT_NAMES } from '../data/tables';
+import { CLASSES, SKILL_DEFS, TALENTS } from '../data/skills';
 import { totalStats } from '../systems/save';
-import type { GameState, Monster } from './types';
+import type { GameState, Monster, SkillBookItem } from './types';
 
 // ─── Apple-inspired palette ─────────────────────────────────────────
 const BG       = '#000000';
@@ -415,6 +416,8 @@ function drawHud(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: 
   if (state.ui.panel === 'bag' || state.ui.panel === 'itemDetail') drawInventory(ctx, state, w, h);
   if (state.ui.panel === 'shop') drawShop(ctx, state, w, h);
   if (state.ui.panel === 'itemDetail') drawItemDetail(ctx, state, w, h);
+  if (state.ui.panel === 'classSelect') drawClassSelect(ctx, state, w, h);
+  if (state.ui.panel === 'talents') drawTalentTree(ctx, state, w, h);
   if (!player.alive) drawDeath(ctx, w, h);
   if (state.showHelp) drawHelp(ctx, w);
 }
@@ -517,7 +520,7 @@ function drawInventory(ctx: CanvasRenderingContext2D, state: GameState, w: numbe
     if (cy + cellSize < gridY || cy > gridY + gridH) continue;
 
     const item = inventory[i];
-    const color = item.type === 'equipment' ? rarityColor(item.rarity) : WARN;
+    const color = item.type === 'equipment' ? rarityColor(item.rarity) : item.type === 'skillBook' ? ACCENT : WARN;
     const isSelected = i === selectedIdx;
 
     // Cell background
@@ -535,7 +538,7 @@ function drawInventory(ctx: CanvasRenderingContext2D, state: GameState, w: numbe
     ctx.lineWidth = 1;
 
     // Icon
-    const icon = item.type === 'equipment' ? '\u25C7' : '+';
+    const icon = item.type === 'equipment' ? (item.affixes && item.affixes.length > 0 ? '\u2605' : '\u25C7') : item.type === 'skillBook' ? '\u2709' : '+';
     text(ctx, icon, cx + cellSize / 2, cy + 8, color, compact ? 16 : 18, 'center');
 
     // Short name
@@ -608,15 +611,17 @@ function drawItemDetail(ctx: CanvasRenderingContext2D, state: GameState, w: numb
   ctx.restore();
 
   // Name
-  const nameColor = item.type === 'equipment' ? rarityColor(item.rarity) : WARN;
+  const nameColor = item.type === 'equipment' ? rarityColor(item.rarity) : item.type === 'skillBook' ? ACCENT : WARN;
   text(ctx, item.name, dx + 20, dy + 20, nameColor, 17);
 
   // Subtitle
   if (item.type === 'equipment') {
     const slotName = SLOT_NAMES[item.slot];
     text(ctx, `${item.rarity}  ${slotName}  LV${item.level}`, dx + 20, dy + 46, T2, 11);
-  } else {
+  } else if (item.type === 'potion') {
     text(ctx, `\u836F\u6C34  \u6062\u590D ${item.heal} HP`, dx + 20, dy + 46, T2, 11);
+  } else {
+    text(ctx, `\u6280\u80FD\u4E66`, dx + 20, dy + 46, T2, 11);
   }
 
   // Stats
@@ -651,9 +656,31 @@ function drawItemDetail(ctx: CanvasRenderingContext2D, state: GameState, w: numb
       text(ctx, '\u5F53\u524D\u672A\u88C5\u5907', dx + 24, sy, T3, 11);
       sy += 22;
     }
-  } else {
+  } else if (item.type === 'potion') {
     text(ctx, `\u6062\u590D\u91CF  ${item.heal} HP`, dx + 24, sy, SUCCESS, 13);
     sy += 22;
+  } else if (item.type === 'skillBook') {
+    const book = item as SkillBookItem;
+    text(ctx, `学习技能: ${book.name.replace('技能书·', '')}`, dx + 24, sy, ACCENT, 13);
+    sy += 22;
+  }
+
+  // Affixes (equipment only)
+  if (item.type === 'equipment' && item.affixes && item.affixes.length > 0) {
+    sy += 4;
+    ctx.strokeStyle = BORDER;
+    ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(dx + 20, sy); ctx.lineTo(dx + dw - 20, sy); ctx.stroke();
+    ctx.lineWidth = 1;
+    sy += 8;
+    for (const affix of item.affixes) {
+      const def = AFFIX_DEFS.find((d) => d.id === affix.id);
+      if (!def) continue;
+      const desc = def.description.replace('{v}', `${affix.value}`);
+      text(ctx, `${def.name}`, dx + 24, sy, rarityColor(item.rarity), 12);
+      text(ctx, desc, dx + 24, sy + 16, T2, 10);
+      sy += 36;
+    }
   }
 
   // Price
@@ -669,7 +696,7 @@ function drawItemDetail(ctx: CanvasRenderingContext2D, state: GameState, w: numb
   const gap = 4;
 
   const buttons: [string, string][] = [
-    [item.type === 'potion' ? '\u4F7F\u7528' : '\u88C5\u5907', ACCENT],
+    [item.type === 'potion' ? '\u4F7F\u7528' : item.type === 'skillBook' ? '\u5B66\u4E60' : '\u88C5\u5907', ACCENT],
     ['\u51FA\u552E', GOLD],
     ['\u4E22\u5F03', T3]
   ];
@@ -744,6 +771,136 @@ function drawShop(ctx: CanvasRenderingContext2D, state: GameState, w: number, h:
   roundRect(ctx, px + 16, closeY, panelW - 32, 34, 10);
   ctx.stroke();
   text(ctx, '\u5173\u95ED', px + panelW / 2, closeY + 9, T2, 13, 'center');
+}
+
+// ─── Class Select ──────────────────────────────────────────────────
+
+function drawClassSelect(ctx: CanvasRenderingContext2D, _state: GameState, w: number, h: number): void {
+  // Full-screen dim
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+  ctx.fillRect(0, 0, w, h);
+
+  // Title
+  text(ctx, '选择职业', w / 2, h / 2 - 160, T1, 22, 'center');
+  text(ctx, '每个职业拥有独特的初始技能和天赋树', w / 2, h / 2 - 130, T2, 12, 'center');
+
+  const classIds = Object.keys(CLASSES);
+  const cardW = Math.min(260, w - 40);
+  const cardH = 100;
+  const gap = 14;
+  const totalH = classIds.length * cardH + (classIds.length - 1) * gap;
+  const startY = (h - totalH) / 2;
+  const startX = (w - cardW) / 2;
+
+  for (let i = 0; i < classIds.length; i++) {
+    const cls = CLASSES[classIds[i]];
+    const cy = startY + i * (cardH + gap);
+
+    // Card
+    ctx.fillStyle = GLASS;
+    roundRect(ctx, startX, cy, cardW, cardH, 12);
+    ctx.fill();
+    ctx.strokeStyle = ACCENT;
+    ctx.lineWidth = 0.5;
+    roundRect(ctx, startX, cy, cardW, cardH, 12);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+
+    // Name
+    text(ctx, cls.name, startX + 20, cy + 16, T1, 18);
+    // Description
+    text(ctx, cls.description, startX + 20, cy + 42, T2, 12);
+    // Starter skills hint
+    const skillNames = cls.starterSkills.map((sid) => SKILL_DEFS[sid]?.name ?? sid).join('、');
+    text(ctx, `初始技能: ${skillNames}`, startX + 20, cy + 62, T3, 10);
+  }
+}
+
+// ─── Talent Tree ──────────────────────────────────────────────────
+
+function drawTalentTree(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
+  const panelW = Math.min(360, w - 24);
+  const panelH = Math.min(460, h - 80);
+  const px = (w - panelW) / 2;
+  const py = (h - panelH) / 2;
+
+  // Dim background
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  ctx.fillRect(0, 0, w, h);
+
+  // Panel
+  panel(ctx, px, py, panelW, panelH, 16);
+
+  // Close [X]
+  ctx.save();
+  ctx.translate(px + panelW - 20, py + 18);
+  ctx.rotate(Math.PI / 4);
+  ctx.fillStyle = T2;
+  ctx.fillRect(-7, -0.75, 14, 1.5);
+  ctx.fillRect(-0.75, -7, 1.5, 14);
+  ctx.restore();
+
+  // Title
+  const player = state.player;
+  const cls = player.playerClass ? CLASSES[player.playerClass] : null;
+  text(ctx, `天赋  (${player.talentPoints} 点可用)`, px + 20, py + 16, T1, 16);
+  if (cls) {
+    text(ctx, `${cls.name} 天赋树`, px + 20, py + 38, T2, 11);
+  }
+
+  // Talent nodes
+  const talentIds = cls?.talents ?? [];
+  const rowH = 44;
+  const nodeStartY = py + 60;
+
+  for (let i = 0; i < talentIds.length; i++) {
+    const tid = talentIds[i];
+    const node = TALENTS[tid];
+    if (!node) continue;
+    const rank = player.talents[tid] ?? 0;
+    const ny = nodeStartY + i * rowH;
+
+    // Locked state
+    const locked = node.requires?.some((req) => !player.talents[req] || player.talents[req] <= 0);
+    const full = rank >= node.maxRank;
+    const color = locked ? T3 : full ? SUCCESS : T1;
+
+    // Row background
+    ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0)';
+    ctx.fillRect(px + 12, ny, panelW - 24, rowH - 4);
+
+    // Name + description
+    text(ctx, node.name, px + 20, ny + 4, color, 14);
+    text(ctx, node.description, px + 20, ny + 22, locked ? T3 : T2, 10);
+    // Rank display
+    text(ctx, `${rank}/${node.maxRank}`, px + panelW - 80, ny + 4, color, 12, 'right');
+
+    // Allocate button
+    const btnX = px + panelW - 72;
+    const btnW2 = 56;
+    const btnH2 = 34;
+    const canAlloc = !locked && !full && player.talentPoints > 0;
+    ctx.fillStyle = canAlloc ? GLASS : 'rgba(255,255,255,0.03)';
+    roundRect(ctx, btnX, ny, btnW2, btnH2, 6);
+    ctx.fill();
+    ctx.strokeStyle = canAlloc ? ACCENT : BORDER;
+    ctx.lineWidth = 0.5;
+    roundRect(ctx, btnX, ny, btnW2, btnH2, 6);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+    text(ctx, '+1', btnX + btnW2 / 2, ny + 10, canAlloc ? ACCENT : T3, 13, 'center');
+
+    // Connection line to next node
+    if (i < talentIds.length - 1) {
+      ctx.strokeStyle = BORDER;
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(px + panelW / 2, ny + rowH - 4);
+      ctx.lineTo(px + panelW / 2, ny + rowH);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+  }
 }
 
 // ─── Message / Death / Help ─────────────────────────────────────────

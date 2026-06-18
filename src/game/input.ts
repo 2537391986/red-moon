@@ -13,7 +13,7 @@ export class Input {
     this.canvas = canvas;
     window.addEventListener('keydown', (event) => {
       this.keys.add(event.key.toLowerCase());
-      if ([' ', '1', '2', '3', 'i', 'b', 'h', 'e', 'r', 'v', 'p', 'enter', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(event.key.toLowerCase())) event.preventDefault();
+      if ([' ', '1', '2', '3', 'i', 'b', 'h', 'e', 'r', 'v', 'p', 't', 'enter', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(event.key.toLowerCase())) event.preventDefault();
       this.actions.add(event.key.toLowerCase());
     });
     window.addEventListener('keyup', (event) => this.keys.delete(event.key.toLowerCase()));

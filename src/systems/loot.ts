@@ -1,5 +1,6 @@
-import { EQUIP_PREFIX } from '../data/tables';
-import type { Drop, EquipSlot, EquipmentItem, Item, Rarity, Stats } from '../game/types';
+import { AFFIX_DEFS, AFFIX_SLOTS, EQUIP_PREFIX } from '../data/tables';
+import { SKILL_DEFS } from '../data/skills';
+import type { Affix, Drop, EquipSlot, EquipmentItem, Item, Rarity, SkillBookItem, Stats } from '../game/types';
 
 let nextId = 1;
 const slots: EquipSlot[] = ['weapon', 'armor', 'helmet', 'necklace', 'ring'];
@@ -23,6 +24,35 @@ function pickRarity(level: number, boss: boolean): Rarity {
 export function makePotion(level: number): Item {
   const heal = 80 + level * 16;
   return { id: uid('potion'), type: 'potion', name: `金创药(${heal})`, heal, price: Math.floor(heal * 0.55) };
+}
+
+function generateAffixes(rarity: Rarity, level: number): Affix[] {
+  const maxSlots = AFFIX_SLOTS[rarity];
+  if (maxSlots === 0) return [];
+  const rank = rarities.indexOf(rarity);
+  const pool = AFFIX_DEFS.filter((d) => rarities.indexOf(d.minRarity) <= rank);
+  if (pool.length === 0) return [];
+
+  const totalWeight = pool.reduce((s, d) => s + d.weight, 0);
+  const picked: Affix[] = [];
+  const usedIds = new Set<string>();
+
+  for (let i = 0; i < maxSlots && pool.length - usedIds.size > 0; i++) {
+    let roll = Math.random() * totalWeight;
+    for (const def of pool) {
+      if (usedIds.has(def.id)) continue;
+      roll -= def.weight;
+      if (roll <= 0) {
+        usedIds.add(def.id);
+        // 数值范围: 基础值 × (1 + 稀有度加成 + 等级缩放)
+        const base = 5 + rank * 3;
+        const value = Math.round(base + Math.random() * level * 0.4);
+        picked.push({ id: def.id, value });
+        break;
+      }
+    }
+  }
+  return picked;
 }
 
 export function makeEquipment(level: number, boss = false): EquipmentItem {
@@ -53,7 +83,16 @@ export function makeEquipment(level: number, boss = false): EquipmentItem {
     stats.maxHp = (stats.maxHp ?? 0) + power * 5;
   }
 
-  return { id: uid('equip'), type: 'equipment', name, slot, rarity, level, stats, price: 35 + power * (12 + rank * 8) };
+  const affixes = generateAffixes(rarity, level);
+  return { id: uid('equip'), type: 'equipment', name, slot, rarity, level, stats, affixes, price: 35 + power * (12 + rank * 8) };
+}
+
+/** 生成技能书掉落 */
+export function makeSkillBook(level: number): SkillBookItem {
+  const ids = Object.keys(SKILL_DEFS);
+  const skillId = ids[Math.floor(Math.random() * ids.length)];
+  const def = SKILL_DEFS[skillId];
+  return { id: uid('skillbook'), type: 'skillBook', name: `技能书·${def.name}`, skillId, price: 50 + level * 10 };
 }
 
 export function makeDrops(x: number, y: number, level: number, boss: boolean): Drop[] {
@@ -67,6 +106,11 @@ export function makeDrops(x: number, y: number, level: number, boss: boolean): D
   }
   if (Math.random() < 0.38) {
     drops.push({ id: uid('drop'), pos: { x: x + Math.random() * 44 - 22, y: y + Math.random() * 44 - 22 }, item: makePotion(level), ttl: 90 });
+  }
+  // 技能书掉落: boss 25%, 普通怪 8%
+  const bookChance = boss ? 0.25 : 0.08;
+  if (Math.random() < bookChance) {
+    drops.push({ id: uid('drop'), pos: { x: x + Math.random() * 44 - 22, y: y + Math.random() * 44 - 22 }, item: makeSkillBook(level), ttl: 90 });
   }
   return drops;
 }
