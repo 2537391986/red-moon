@@ -51,7 +51,7 @@ function makePlayer(): Player {
 function spawnMonster(kind: MonsterKind, x: number, y: number, level: number, elite = false, boss = false): Monster {
   const base = MONSTER_BASE[kind];
   const scale = 1 + level * 0.12;
-  const eliteScale = boss ? 7 : elite ? 2.1 : 1;
+  const eliteScale = boss ? 4 : elite ? 2.1 : 1;
   return {
     id: uid('monster'),
     kind,
@@ -60,11 +60,11 @@ function spawnMonster(kind: MonsterKind, x: number, y: number, level: number, el
     level,
     hp: Math.round(base.hp * scale * eliteScale),
     maxHp: Math.round(base.hp * scale * eliteScale),
-    attack: Math.round(base.attack * scale * (boss ? 1.8 : elite ? 1.35 : 1)),
-    defense: Math.round(base.defense * scale * (boss ? 1.8 : elite ? 1.4 : 1)),
+    attack: Math.round(base.attack * scale * (boss ? 1.3 : elite ? 1.35 : 1)),
+    defense: Math.round(base.defense * scale * (boss ? 1.2 : elite ? 1.4 : 1)),
     exp: Math.round(base.exp * scale * eliteScale),
     radius: boss ? 34 : elite ? 24 : 18,
-    speed: base.speed * (boss ? 0.86 : 1),
+    speed: base.speed * (boss ? 1.1 : 1),
     elite,
     boss,
     respawn: 0,
@@ -72,7 +72,8 @@ function spawnMonster(kind: MonsterKind, x: number, y: number, level: number, el
     vel: { x: 0, y: 0 },
     facing: { x: -1, y: 0 },
     action: null,
-    hitstun: 0
+    hitstun: 0,
+    enraged: false
   };
 }
 
@@ -418,7 +419,7 @@ export class Game {
     const recoveryAt = monster.boss ? 0.7 : 0.48;
     if (action.phase === 'windup' && action.timer >= strikeAt) {
       action.phase = 'strike';
-      if (!action.resolved) {
+      if (!action.resolved && monster.hp > 0) {
         action.resolved = true;
         this.resolveMonsterAttack(monster);
       }
@@ -435,6 +436,15 @@ export class Game {
         if (monster.respawn <= 0) this.respawnMonster(monster);
         continue;
       }
+      // Boss enrage: below 30% HP → faster and stronger
+      if (monster.boss && !monster.enraged && monster.hp < monster.maxHp * 0.3) {
+        monster.enraged = true;
+        monster.attack = Math.round(monster.attack * 1.4);
+        this.float('狂暴!', monster.pos.x, monster.pos.y - monster.radius - 30, '#ff2020');
+        this.spawnParticles(monster.pos.x, monster.pos.y, '#ff2020', 20);
+        this.say('赤月恶魔陷入狂暴！');
+      }
+      const speed = monster.speed * (monster.enraged ? 1.4 : 1);
       monster.hitstun = Math.max(0, monster.hitstun - dt);
       if (monster.hitstun > 0) continue;
       monster.attackCooldown = Math.max(0, monster.attackCooldown - dt);
@@ -446,18 +456,18 @@ export class Game {
         const dy = (player.pos.y - monster.pos.y) / Math.max(1, d);
         monster.facing = { x: dx, y: dy };
         if (d > monster.radius + 24) {
-          monster.pos.x += dx * monster.speed * dt + monster.vel.x * dt;
-          monster.pos.y += dy * monster.speed * dt + monster.vel.y * dt;
+          monster.pos.x += dx * speed * dt + monster.vel.x * dt;
+          monster.pos.y += dy * speed * dt + monster.vel.y * dt;
         } else if (monster.attackCooldown <= 0) {
           monster.action = makeAction('monster', monster.boss ? 0.92 : 0.62);
-          monster.attackCooldown = monster.boss ? 1.7 : 1.25;
+          monster.attackCooldown = monster.boss ? (monster.enraged ? 1.2 : 1.7) : 1.25;
           this.float('!', monster.pos.x, monster.pos.y - monster.radius - 20, monster.boss ? '#ff3150' : '#ffd166');
         }
       } else if (d > 520) {
         const home = dist(monster.pos, monster.spawn);
         if (home > 8) {
-          monster.pos.x += ((monster.spawn.x - monster.pos.x) / home) * monster.speed * 0.45 * dt + monster.vel.x * dt;
-          monster.pos.y += ((monster.spawn.y - monster.pos.y) / home) * monster.speed * 0.45 * dt + monster.vel.y * dt;
+          monster.pos.x += ((monster.spawn.x - monster.pos.x) / home) * speed * 0.45 * dt + monster.vel.x * dt;
+          monster.pos.y += ((monster.spawn.y - monster.pos.y) / home) * speed * 0.45 * dt + monster.vel.y * dt;
         }
       }
     }
@@ -615,7 +625,7 @@ export class Game {
       return;
     }
     // 词条: 闪避 (dodge)
-    const dodgeChance = this.getAffixPercent('dodge');
+    const dodgeChance = this.getAffixTotal('dodge');
     if (dodgeChance > 0 && Math.random() * 100 < dodgeChance) {
       this.float('闪避', player.pos.x, player.pos.y - 28, '#79e07d');
       return;
@@ -624,7 +634,7 @@ export class Game {
     const damage = Math.max(1, monster.attack - playerStats.defense + Math.floor(Math.random() * 6));
     player.hp -= damage;
     // 词条: 荆棘 (thorns) — 反弹伤害
-    const thornsPercent = this.getAffixPercent('thorns');
+    const thornsPercent = this.getAffixTotal('thorns');
     if (thornsPercent > 0) {
       const reflect = Math.max(1, Math.round(damage * thornsPercent / 100));
       monster.hp -= reflect;
@@ -653,11 +663,11 @@ export class Game {
     let raw = Math.round((stats.attack * multiplier + Math.random() * stats.attack * 0.35) * (crit ? 1.8 : 1));
     // 词条: 暴击强化 (crit_damage) — 暴击时额外百分比伤害
     if (crit) {
-      const critBonus = this.getAffixPercent('crit_damage');
+      const critBonus = this.getAffixTotal('crit_damage');
       if (critBonus > 0) raw = Math.round(raw * (1 + critBonus / 100));
     }
     // 词条: 斩杀 (execute) — 目标低血量时伤害加成
-    const executePercent = this.getAffixPercent('execute');
+    const executePercent = this.getAffixTotal('execute');
     if (executePercent > 0 && monster.hp < monster.maxHp * 0.3) {
       raw = Math.round(raw * (1 + executePercent / 100));
     }
@@ -674,15 +684,15 @@ export class Game {
     this.spawnParticles(monster.pos.x, monster.pos.y, crit ? '#ffd166' : '#d8f3ff', crit ? 14 : 8);
     // 词条: 吸血强化 (lifesteal_boost)
     let effectiveLifeSteal = stats.lifeSteal;
-    const lsBoost = this.getAffixPercent('lifesteal_boost');
+    const lsBoost = this.getAffixTotal('lifesteal_boost');
     if (lsBoost > 0) effectiveLifeSteal *= (1 + lsBoost / 100);
     if (effectiveLifeSteal > 0) {
       this.state.player.hp = Math.min(stats.maxHp, this.state.player.hp + Math.ceil(damage * effectiveLifeSteal));
     }
     if (skillIndex) this.burst(monster.pos.x, monster.pos.y, this.state.skills[skillIndex - 1]);
-    if (monster.hp <= 0) this.killMonster(monster);
+    if (monster.hp <= 0) { this.killMonster(monster); return; }
     // 词条: 连击 (double_strike) — 概率追加普攻
-    const doubleStrikeChance = this.getAffixPercent('double_strike');
+    const doubleStrikeChance = this.getAffixTotal('double_strike');
     if (doubleStrikeChance > 0 && Math.random() * 100 < doubleStrikeChance && monster.hp > 0) {
       const extraDmg = Math.max(1, Math.round(stats.attack * 0.8) - monster.defense);
       monster.hp -= extraDmg;
@@ -1148,10 +1158,6 @@ export class Game {
       }
     }
     return total;
-  }
-
-  private getAffixPercent(affixId: string): number {
-    return this.getAffixTotal(affixId);
   }
 
   private resize(): void {

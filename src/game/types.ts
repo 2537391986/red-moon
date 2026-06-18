@@ -179,6 +179,7 @@ export type Monster = {
   facing: Vec2;
   action: AttackAction | null;
   hitstun: number;
+  enraged?: boolean;
 };
 
 export type Drop = {

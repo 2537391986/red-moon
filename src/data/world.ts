@@ -1,4 +1,4 @@
-import type { Skill, Zone } from '../game/types';
+import type { Zone } from '../game/types';
 
 export const WORLD = { width: 2400, height: 1600 };
 
@@ -12,17 +12,3 @@ export const ZONES: Zone[] = [
 
 export const SHOP_POS = { x: 1160, y: 760 };
 export const RESPAWN_POS = { x: 1160, y: 790 };
-
-export const STARTER_SKILLS: Skill[] = [
-  { id: 'fire', name: '烈火剑法', cooldown: 4, remaining: 0, range: 92, radius: 36, multiplier: 2.4, color: '#ff7733' },
-  { id: 'thunder', name: '雷电术', cooldown: 6, remaining: 0, range: 210, radius: 52, multiplier: 1.8, color: '#77c8ff' },
-  { id: 'moon', name: '半月弯刀', cooldown: 8, remaining: 0, range: 116, radius: 96, multiplier: 1.35, color: '#d8e6ff' }
-];
-
-export const RARITY_COLOR = {
-  普通: '#e6d6ad',
-  精良: '#74d67a',
-  稀有: '#64a8ff',
-  史诗: '#c57cff',
-  传说: '#ffb13d'
-} as const;

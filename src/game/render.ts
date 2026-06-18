@@ -220,8 +220,20 @@ function drawMonsters(ctx: CanvasRenderingContext2D, state: GameState, w: number
     if (x < -80 || y < -80 || x > w + 80 || y > h + 80) continue;
     const isWinding = monster.action?.phase === 'windup';
     const isStunned = monster.hitstun > 0;
-    const color = isWinding ? '#FFFACD' : monster.boss ? WARN : monster.elite ? '#BF5AF2' : monsterColor(monster);
+    const isEnraged = monster.boss && monster.enraged;
+    const color = isWinding ? '#FFFACD' : isEnraged ? '#ff2020' : monster.boss ? WARN : monster.elite ? '#BF5AF2' : monsterColor(monster);
     const glyph = monsterGlyph(monster);
+
+    // Enrage aura — pulsing red ring
+    if (isEnraged) {
+      const pulse = 0.3 + Math.sin(state.time * 6) * 0.15;
+      ctx.strokeStyle = `rgba(255,32,32,${pulse})`;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(x, y, monster.radius + 14 + Math.sin(state.time * 8) * 3, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
 
     // Hitstun flash — quick white pulse
     if (isStunned) {
@@ -265,7 +277,8 @@ function drawMonsters(ctx: CanvasRenderingContext2D, state: GameState, w: number
     }
 
     bar(ctx, x - 26, y - monster.radius - 12, 52, 3, monster.hp, monster.maxHp, color);
-    text(ctx, `${monster.boss ? 'BOSS ' : monster.elite ? 'ELT ' : ''}${monster.kind}`, x, y + monster.radius + 4, T3, 9, 'center');
+    const label = isEnraged ? '狂暴 ' : monster.boss ? 'BOSS ' : monster.elite ? 'ELT ' : '';
+    text(ctx, `${label}${monster.kind}`, x, y + monster.radius + 4, isEnraged ? '#ff2020' : T3, 9, 'center');
   }
 }
 
