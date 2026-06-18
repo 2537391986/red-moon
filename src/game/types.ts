@@ -215,14 +215,15 @@ export type UiState = {
   scroll: number;
 };
 
+export type GameMessage = { text: string; timer: number };
+
 export type GameState = {
   player: Player;
   monsters: Monster[];
   drops: Drop[];
   skills: Skill[];
   floats: FloatingText[];
-  message: string;
-  messageTimer: number;
+  messages: GameMessage[];
   time: number;
   camera: Vec2;
   shake: number;

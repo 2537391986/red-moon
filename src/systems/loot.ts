@@ -100,15 +100,15 @@ export function makeDrops(x: number, y: number, level: number, boss: boolean): D
   const gold = Math.floor((boss ? 120 : 12) + level * (boss ? 16 : 4) + Math.random() * level * 8);
   drops.push({ id: uid('gold'), pos: { x: x + Math.random() * 36 - 18, y: y + Math.random() * 36 - 18 }, gold, ttl: 90 });
 
-  const equipChance = boss ? 1 : 0.26 + level * 0.012;
+  const equipChance = boss ? 1 : 0.12 + level * 0.006;
   if (Math.random() < equipChance) {
     drops.push({ id: uid('drop'), pos: { x: x + Math.random() * 44 - 22, y: y + Math.random() * 44 - 22 }, item: makeEquipment(level, boss), ttl: 90 });
   }
   if (Math.random() < 0.38) {
     drops.push({ id: uid('drop'), pos: { x: x + Math.random() * 44 - 22, y: y + Math.random() * 44 - 22 }, item: makePotion(level), ttl: 90 });
   }
-  // 技能书掉落: boss 25%, 普通怪 8%
-  const bookChance = boss ? 0.25 : 0.08;
+  // 技能书掉落: boss 25%, 普通怪 4%
+  const bookChance = boss ? 0.25 : 0.04;
   if (Math.random() < bookChance) {
     drops.push({ id: uid('drop'), pos: { x: x + Math.random() * 44 - 22, y: y + Math.random() * 44 - 22 }, item: makeSkillBook(level), ttl: 90 });
   }

@@ -2,7 +2,7 @@ import { SHOP_POS, WORLD, ZONES } from '../data/world';
 import { AFFIX_DEFS, SLOT_NAMES } from '../data/tables';
 import { CLASSES, SKILL_DEFS, TALENTS } from '../data/skills';
 import { totalStats } from '../systems/save';
-import type { GameState, Monster, SkillBookItem } from './types';
+import type { GameMessage, GameState, Monster, SkillBookItem } from './types';
 
 // ─── Apple-inspired palette ─────────────────────────────────────────
 const BG       = '#000000';
@@ -387,6 +387,85 @@ function drawFloats(ctx: CanvasRenderingContext2D, state: GameState): void {
   }
 }
 
+// ─── Minimap ────────────────────────────────────────────────────────
+
+function drawMinimap(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
+  const compact = isPortrait(w, h);
+  const mmW = compact ? 100 : 150;
+  const mmH = Math.round(mmW * (WORLD.height / WORLD.width));
+  const mx = w - mmW - 10;
+  const my = compact ? 10 : 10;
+  const sx = mmW / WORLD.width;
+  const sy = mmH / WORLD.height;
+
+  // Background
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+  roundRect(ctx, mx, my, mmW, mmH, 6);
+  ctx.fill();
+  ctx.strokeStyle = BORDER;
+  ctx.lineWidth = 0.5;
+  roundRect(ctx, mx, my, mmW, mmH, 6);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+
+  // Clip to minimap bounds
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(mx, my, mmW, mmH);
+  ctx.clip();
+
+  // Zones
+  for (const zone of ZONES) {
+    const zx = mx + zone.x * sx;
+    const zy = my + zone.y * sy;
+    const zw = zone.w * sx;
+    const zh = zone.h * sy;
+    ctx.fillStyle = zone.color;
+    ctx.globalAlpha = 0.35;
+    ctx.fillRect(zx, zy, zw, zh);
+    ctx.globalAlpha = 1;
+  }
+
+  // Shop marker
+  ctx.fillStyle = GOLD;
+  ctx.beginPath();
+  ctx.arc(mx + SHOP_POS.x * sx, my + SHOP_POS.y * sy, compact ? 2 : 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Monsters (sample every 3rd to keep it light)
+  for (let i = 0; i < state.monsters.length; i++) {
+    const m = state.monsters[i];
+    if (m.hp <= 0) continue;
+    const px = mx + m.pos.x * sx;
+    const py = my + m.pos.y * sy;
+    ctx.fillStyle = m.boss ? '#ff3150' : m.elite ? '#BF5AF2' : 'rgba(255,100,100,0.5)';
+    const r = m.boss ? (compact ? 3 : 4) : m.elite ? (compact ? 2 : 2.5) : (compact ? 1 : 1.5);
+    ctx.beginPath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Player dot (blinking)
+  const blink = 0.6 + Math.sin(state.time * 5) * 0.4;
+  ctx.fillStyle = `rgba(100, 255, 130, ${blink})`;
+  ctx.beginPath();
+  ctx.arc(mx + state.player.pos.x * sx, my + state.player.pos.y * sy, compact ? 2.5 : 3.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Camera viewport outline
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 0.5;
+  ctx.strokeRect(
+    mx + state.camera.x * sx,
+    my + state.camera.y * sy,
+    w * sx,
+    h * sy
+  );
+  ctx.lineWidth = 1;
+
+  ctx.restore();
+}
+
 // ─── HUD ────────────────────────────────────────────────────────────
 
 function drawHud(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
@@ -425,12 +504,13 @@ function drawHud(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: 
   text(ctx, hint, 14, h - 22, T3, compact ? 10 : 11);
 
   drawSkills(ctx, state, w, h);
-  if (state.messageTimer > 0) drawMessage(ctx, state.message, w, h);
+  if (state.messages.length > 0) drawMessages(ctx, state.messages, w, h);
   if (state.ui.panel === 'bag' || state.ui.panel === 'itemDetail') drawInventory(ctx, state, w, h);
   if (state.ui.panel === 'shop') drawShop(ctx, state, w, h);
   if (state.ui.panel === 'itemDetail') drawItemDetail(ctx, state, w, h);
   if (state.ui.panel === 'classSelect') drawClassSelect(ctx, state, w, h);
   if (state.ui.panel === 'talents') drawTalentTree(ctx, state, w, h);
+  drawMinimap(ctx, state, w, h);
   if (!player.alive) drawDeath(ctx, w, h);
   if (state.showHelp) drawHelp(ctx, w);
 }
@@ -918,16 +998,24 @@ function drawTalentTree(ctx: CanvasRenderingContext2D, state: GameState, w: numb
 
 // ─── Message / Death / Help ─────────────────────────────────────────
 
-function drawMessage(ctx: CanvasRenderingContext2D, message: string, w: number, h: number): void {
+function drawMessages(ctx: CanvasRenderingContext2D, messages: GameMessage[], w: number, h: number): void {
   const compact = isPortrait(w, h);
   const boxW = compact ? w - 24 : 520;
   const x = compact ? 12 : w / 2 - 260;
-  const y = compact ? h - 300 : h - 80;
+  const rowH = 28;
+  const baseY = compact ? h - 300 : h - 80;
 
-  ctx.fillStyle = 'rgba(28, 28, 30, 0.85)';
-  roundRect(ctx, x, y, boxW, 30, 8);
-  ctx.fill();
-  text(ctx, compact ? message.slice(0, 30) : message, compact ? x + 12 : x + boxW / 2, y + 8, T1, compact ? 11 : 13, compact ? 'left' : 'center');
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    const y = baseY - (messages.length - 1 - i) * rowH;
+    const alpha = Math.min(1, msg.timer / 0.8); // fade out in last 0.8s
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = 'rgba(28, 28, 30, 0.85)';
+    roundRect(ctx, x, y, boxW, 26, 8);
+    ctx.fill();
+    text(ctx, compact ? msg.text.slice(0, 30) : msg.text, compact ? x + 12 : x + boxW / 2, y + 6, T1, compact ? 11 : 13, compact ? 'left' : 'center');
+    ctx.globalAlpha = 1;
+  }
 }
 
 function drawDeath(ctx: CanvasRenderingContext2D, w: number, h: number): void {

@@ -112,8 +112,7 @@ function createState(): GameState {
     drops: [],
     skills: loaded?.skills ?? [],
     floats: [],
-    message: isNewGame ? '选择你的职业开始冒险！' : '欢迎来到赤月孤城：WASD/方向键移动，空格攻击，1/2/3 技能，I 背包，E 商店，T 天赋。',
-    messageTimer: 8,
+    messages: [{ text: isNewGame ? '选择你的职业开始冒险！' : '欢迎来到赤月孤城：WASD移动，空格攻击，1/2/3 技能，I 背包，E 商店，T 天赋。', timer: 8 }],
     time: loaded?.time ?? 0,
     camera: { x: 0, y: 0 },
     shake: 0,
@@ -551,7 +550,9 @@ export class Game {
 
   private updateUi(dt: number): void {
     const state = this.state;
-    state.messageTimer = Math.max(0, state.messageTimer - dt);
+    // Message queue: decrement timers and remove expired
+    for (const msg of state.messages) msg.timer = Math.max(0, msg.timer - dt);
+    state.messages = state.messages.filter((msg) => msg.timer > 0);
     state.floats = state.floats.filter((text) => {
       text.ttl -= dt;
       text.pos.y -= 26 * dt;
@@ -1091,8 +1092,8 @@ export class Game {
   }
 
   private say(message: string): void {
-    this.state.message = message;
-    this.state.messageTimer = 4;
+    this.state.messages.push({ text: message, timer: 4 });
+    if (this.state.messages.length > 4) this.state.messages.shift();
   }
 
   /* ---- 职业 / 技能 / 天赋 ---- */
