@@ -1,11 +1,10 @@
-import { SHOP_POS, WORLD, ZONES } from '../data/world';
 import { AFFIX_DEFS, SLOT_NAMES } from '../data/tables';
 import { CLASSES, SKILL_DEFS, TALENTS } from '../data/skills';
+import { STAGES, getStageById } from '../data/stages';
 import { totalStats } from '../systems/save';
-import type { GameMessage, GameState, Monster, SkillBookItem } from './types';
+import type { GameMessage, GameState, StageTheme } from './types';
 
 // ─── Apple-inspired palette ─────────────────────────────────────────
-const BG       = '#000000';
 const SURFACE  = 'rgba(28, 28, 30, 0.88)';
 const GLASS    = 'rgba(44, 44, 46, 0.72)';
 const BORDER   = 'rgba(255, 255, 255, 0.08)';
@@ -31,6 +30,16 @@ const RARITY: Record<string, string> = {
 function rarityColor(r: string): string {
   return RARITY[r] ?? T1;
 }
+
+// ─── Theme parallax layers ──────────────────────────────────────────
+const THEMES: Record<StageTheme, { bg: string; symbols: { char: string; color: string; alpha: number }[] }> = {
+  plain:  { bg: '#050510', symbols: [{ char: '.', color: '#222240', alpha: 0.3 }, { char: '+', color: '#1a1a30', alpha: 0.2 }] },
+  forest: { bg: '#050a05', symbols: [{ char: '|', color: '#1a3020', alpha: 0.3 }, { char: 'Y', color: '#143018', alpha: 0.2 }] },
+  ruin:   { bg: '#0a0808', symbols: [{ char: '∏', color: '#302020', alpha: 0.3 }, { char: '⌐', color: '#281818', alpha: 0.2 }] },
+  cave:   { bg: '#040408', symbols: [{ char: '~', color: '#181830', alpha: 0.3 }, { char: '.', color: '#101020', alpha: 0.2 }] },
+  castle: { bg: '#0a0505', symbols: [{ char: '║', color: '#301818', alpha: 0.3 }, { char: '═', color: '#281414', alpha: 0.2 }] },
+  void:   { bg: '#000005', symbols: [{ char: '*', color: '#181830', alpha: 0.3 }, { char: '·', color: '#101020', alpha: 0.2 }] },
+};
 
 // ─── Drawing helpers ────────────────────────────────────────────────
 
@@ -133,44 +142,81 @@ export function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement,
   drawFloats(ctx, state);
   ctx.restore();
   drawHud(ctx, state, w, h);
-  drawTouchControls(ctx, move, w, h);
+  drawTouchControls(ctx, move, w, h, state);
 }
 
-// ─── World ──────────────────────────────────────────────────────────
+// ─── World (side-scroll) ────────────────────────────────────────────
 
 function drawWorld(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
-  ctx.fillStyle = BG;
+  const stageConfig = getStageById(state.stage.stageId) ?? STAGES[0];
+  const theme = THEMES[stageConfig.theme] ?? THEMES.plain;
+
+  // Theme background
+  ctx.fillStyle = theme.bg;
   ctx.fillRect(0, 0, w, h);
+
+  // Parallax layers (screen space, no camera transform)
+  const layers = [
+    { factor: 0.05, spacingX: 140, symbols: theme.symbols[0] },
+    { factor: 0.2, spacingX: 90, symbols: theme.symbols[1] ?? theme.symbols[0] },
+  ];
+
+  for (const layer of layers) {
+    if (!layer.symbols) continue;
+    ctx.globalAlpha = layer.symbols.alpha;
+    text(ctx, layer.symbols.char, 0, 0, layer.symbols.color, 12); // warm font cache
+    const offset = state.camera.x * layer.factor;
+    const startCol = Math.floor(offset / layer.spacingX) - 1;
+    const endCol = startCol + Math.ceil(w / layer.spacingX) + 2;
+    for (let col = startCol; col <= endCol; col++) {
+      const sx = col * layer.spacingX - offset;
+      const seed = ((col * 2654435761) >>> 0) / 4294967296;
+      const sy = h * (0.12 + seed * 0.52);
+      ctx.font = `${11 + Math.floor(seed * 5)}px Consolas, monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = layer.symbols.color;
+      ctx.fillText(layer.symbols.char, sx, sy);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // World-space elements (camera transform)
   ctx.save();
   ctx.translate(-state.camera.x, -state.camera.y);
 
-  // Subtle grid
-  ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+  // Ground line
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, stageConfig.groundY);
+  ctx.lineTo(stageConfig.width, stageConfig.groundY);
+  ctx.stroke();
+
+  // Ground fill below
+  ctx.fillStyle = 'rgba(255,255,255,0.015)';
+  ctx.fillRect(0, stageConfig.groundY, stageConfig.width, h);
+
+  // Ground texture marks
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
   ctx.lineWidth = 0.5;
-  for (let x = 0; x < WORLD.width; x += 48) {
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, WORLD.height); ctx.stroke();
-  }
-  for (let y = 0; y < WORLD.height; y += 48) {
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(WORLD.width, y); ctx.stroke();
+  for (let x = 0; x < stageConfig.width; x += 64) {
+    ctx.beginPath();
+    ctx.moveTo(x, stageConfig.groundY + 2);
+    ctx.lineTo(x + 20, stageConfig.groundY + 2);
+    ctx.stroke();
   }
   ctx.lineWidth = 1;
 
-  // Zones
-  for (const zone of ZONES) {
-    ctx.strokeStyle = zone.color;
-    ctx.globalAlpha = 0.35;
-    ctx.setLineDash([8, 10]);
-    ctx.strokeRect(zone.x, zone.y, zone.w, zone.h);
-    ctx.setLineDash([]);
-    ctx.globalAlpha = 1;
-    text(ctx, `${zone.name}  LV${zone.level}+`, zone.x + 14, zone.y + 14, zone.color, 14);
-  }
+  // Stage boundary markers
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.setLineDash([4, 8]);
+  ctx.beginPath();
+  ctx.moveTo(stageConfig.width, stageConfig.groundY - 80);
+  ctx.lineTo(stageConfig.width, stageConfig.groundY);
+  ctx.stroke();
+  ctx.setLineDash([]);
 
-  // Shop
-  ctx.strokeStyle = 'rgba(255,214,10,0.3)';
-  ctx.strokeRect(SHOP_POS.x - 46, SHOP_POS.y - 34, 92, 68);
-  textGlow(ctx, '\u836F', SHOP_POS.x, SHOP_POS.y - 10, GOLD, 24, 'center');
-  text(ctx, 'SHOP', SHOP_POS.x, SHOP_POS.y - 52, T3, 11, 'center');
   ctx.restore();
 }
 
@@ -201,6 +247,13 @@ function drawPlayer(ctx: CanvasRenderingContext2D, state: GameState): void {
   ctx.stroke();
   ctx.globalAlpha = 1;
 
+  // Action charge bar
+  if (player.action && player.action.phase === 'windup') {
+    const strikeAt = player.action.kind === 'basic' ? 0.16 : 0.24;
+    const progress = player.action.timer / strikeAt;
+    bar(ctx, x - 20, y - 46, 40, 3, progress, 1, ACCENT);
+  }
+
   // HP bar
   bar(ctx, x - 24, y - 38, 48, 4, player.hp, stats.maxHp, HP_BAR);
   text(ctx, `LV ${player.level}`, x, y + 16, T2, 10, 'center');
@@ -221,8 +274,8 @@ function drawMonsters(ctx: CanvasRenderingContext2D, state: GameState, w: number
     const isWinding = monster.action?.phase === 'windup';
     const isStunned = monster.hitstun > 0;
     const isEnraged = monster.boss && monster.enraged;
-    const color = isWinding ? '#FFFACD' : isEnraged ? '#ff2020' : monster.boss ? WARN : monster.elite ? '#BF5AF2' : monsterColor(monster);
-    const glyph = monsterGlyph(monster);
+    const color = isWinding ? '#FFFACD' : isEnraged ? '#ff2020' : monster.boss ? WARN : monster.elite ? '#BF5AF2' : (monster.color ?? '#888');
+    const glyph = monster.glyph ?? '?';
 
     // Enrage aura — pulsing red ring
     if (isEnraged) {
@@ -246,13 +299,24 @@ function drawMonsters(ctx: CanvasRenderingContext2D, state: GameState, w: number
     // Attack warning zone — filled arc in attack direction
     if (isWinding) {
       const angle = Math.atan2(monster.facing.y, monster.facing.x);
-      const progress = monster.action!.timer / (monster.boss ? 0.52 : 0.34);
-      ctx.fillStyle = `rgba(255,250,205,${0.06 + progress * 0.12})`;
+      const windupDuration = monster.boss ? 0.52 : 0.34;
+      const progress = monster.action!.timer / windupDuration;
+      
+      // Progress fill
+      ctx.fillStyle = `rgba(255, 69, 58, ${0.15 + progress * 0.25})`;
       ctx.beginPath();
       ctx.moveTo(x, y);
-      ctx.arc(x, y, monster.radius + 36 + progress * 12, angle - 0.5, angle + 0.5);
+      ctx.arc(x, y, (monster.radius + 36) * progress, angle - 0.5, angle + 0.5);
       ctx.closePath();
       ctx.fill();
+
+      // Outer outline
+      ctx.strokeStyle = `rgba(255, 69, 58, ${0.4 + progress * 0.4})`;
+      ctx.setLineDash([4, 2]);
+      ctx.beginPath();
+      ctx.arc(x, y, monster.radius + 36, angle - 0.5, angle + 0.5);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
 
     // Circle
@@ -280,22 +344,6 @@ function drawMonsters(ctx: CanvasRenderingContext2D, state: GameState, w: number
     const label = isEnraged ? '狂暴 ' : monster.boss ? 'BOSS ' : monster.elite ? 'ELT ' : '';
     text(ctx, `${label}${monster.kind}`, x, y + monster.radius + 4, isEnraged ? '#ff2020' : T3, 9, 'center');
   }
-}
-
-function monsterGlyph(m: Monster): string {
-  if (m.kind === '\u7A3B\u8349\u4EBA') return '#';
-  if (m.kind === '\u534A\u517D\u4EBA') return '&';
-  if (m.kind === '\u9AB7\u9AC5\u6218\u58EB') return '%';
-  if (m.kind === '\u6C83\u739B\u536B\u58EB') return 'W';
-  return '\u03A9';
-}
-
-function monsterColor(m: Monster): string {
-  if (m.kind === '\u7A3B\u8349\u4EBA') return '#8B946E';
-  if (m.kind === '\u534A\u517D\u4EBA') return '#6E9B5A';
-  if (m.kind === '\u9AB7\u9AC5\u6218\u58EB') return '#A0A0A0';
-  if (m.kind === '\u6C83\u739B\u536B\u58EB') return '#8B7EC8';
-  return WARN;
 }
 
 // ─── Drops / Slashes / Particles / Floats ───────────────────────────
@@ -382,88 +430,9 @@ function drawFloats(ctx: CanvasRenderingContext2D, state: GameState): void {
   for (const f of state.floats) {
     const [x, y] = worldToScreen(state, f.pos.x, f.pos.y);
     ctx.globalAlpha = Math.min(1, f.ttl * 2);
-    text(ctx, f.text, x, y, f.color, 12, 'center');
+    text(ctx, f.text, x, y, f.color, f.vel ? 14 : 12, 'center');
     ctx.globalAlpha = 1;
   }
-}
-
-// ─── Minimap ────────────────────────────────────────────────────────
-
-function drawMinimap(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
-  const compact = isPortrait(w, h);
-  const mmW = compact ? 100 : 150;
-  const mmH = Math.round(mmW * (WORLD.height / WORLD.width));
-  const mx = w - mmW - 10;
-  const my = compact ? 10 : 10;
-  const sx = mmW / WORLD.width;
-  const sy = mmH / WORLD.height;
-
-  // Background
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
-  roundRect(ctx, mx, my, mmW, mmH, 6);
-  ctx.fill();
-  ctx.strokeStyle = BORDER;
-  ctx.lineWidth = 0.5;
-  roundRect(ctx, mx, my, mmW, mmH, 6);
-  ctx.stroke();
-  ctx.lineWidth = 1;
-
-  // Clip to minimap bounds
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(mx, my, mmW, mmH);
-  ctx.clip();
-
-  // Zones
-  for (const zone of ZONES) {
-    const zx = mx + zone.x * sx;
-    const zy = my + zone.y * sy;
-    const zw = zone.w * sx;
-    const zh = zone.h * sy;
-    ctx.fillStyle = zone.color;
-    ctx.globalAlpha = 0.35;
-    ctx.fillRect(zx, zy, zw, zh);
-    ctx.globalAlpha = 1;
-  }
-
-  // Shop marker
-  ctx.fillStyle = GOLD;
-  ctx.beginPath();
-  ctx.arc(mx + SHOP_POS.x * sx, my + SHOP_POS.y * sy, compact ? 2 : 3, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Monsters (sample every 3rd to keep it light)
-  for (let i = 0; i < state.monsters.length; i++) {
-    const m = state.monsters[i];
-    if (m.hp <= 0) continue;
-    const px = mx + m.pos.x * sx;
-    const py = my + m.pos.y * sy;
-    ctx.fillStyle = m.boss ? '#ff3150' : m.elite ? '#BF5AF2' : 'rgba(255,100,100,0.5)';
-    const r = m.boss ? (compact ? 3 : 4) : m.elite ? (compact ? 2 : 2.5) : (compact ? 1 : 1.5);
-    ctx.beginPath();
-    ctx.arc(px, py, r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // Player dot (blinking)
-  const blink = 0.6 + Math.sin(state.time * 5) * 0.4;
-  ctx.fillStyle = `rgba(100, 255, 130, ${blink})`;
-  ctx.beginPath();
-  ctx.arc(mx + state.player.pos.x * sx, my + state.player.pos.y * sy, compact ? 2.5 : 3.5, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Camera viewport outline
-  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-  ctx.lineWidth = 0.5;
-  ctx.strokeRect(
-    mx + state.camera.x * sx,
-    my + state.camera.y * sy,
-    w * sx,
-    h * sy
-  );
-  ctx.lineWidth = 1;
-
-  ctx.restore();
 }
 
 // ─── HUD ────────────────────────────────────────────────────────────
@@ -473,35 +442,57 @@ function drawHud(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: 
   const stats = totalStats(player);
   const compact = isPortrait(w, h);
 
-  // Top status bar
+  // Top status bar — compact in portrait
   const pw = compact ? w - 20 : 320;
-  const ph = compact ? 78 : 90;
-  panel(ctx, 10, 10, pw, ph, 14);
+  const ph = compact ? 52 : 90;
+  panel(ctx, 10, compact ? 6 : 10, pw, ph, 14);
 
   // Title + gold
-  text(ctx, compact ? '\u8D64\u6708\u5B64\u57CE' : '\u8D64\u6708\u5B64\u57CE  TERMINAL', 22, 20, T1, compact ? 13 : 14);
-  text(ctx, `$ ${player.gold}`, compact ? pw - 8 : 280, 20, GOLD, 12, compact ? 'right' : 'left');
+  text(ctx, compact ? '\u8D64\u6708\u5B64\u57CE' : '\u8D64\u6708\u5B64\u57CE  TERMINAL', 22, compact ? 14 : 20, T1, compact ? 12 : 14);
+  text(ctx, `$ ${player.gold}`, compact ? pw - 8 : 280, compact ? 14 : 20, GOLD, 12, compact ? 'right' : 'left');
 
   // Bars
   const bw = compact ? pw - 28 : 230;
-  bar(ctx, 22, 42, bw, 6, player.hp, stats.maxHp, HP_BAR);
-  text(ctx, `${player.hp}`, 22, 52, T3, 9);
-  text(ctx, `${stats.maxHp}`, 22 + bw, 52, T3, 9, 'right');
+  bar(ctx, 22, compact ? 28 : 42, bw, compact ? 5 : 6, player.hp, stats.maxHp, HP_BAR);
+  if (compact) {
+    text(ctx, `${player.hp}/${stats.maxHp}`, 22 + bw / 2, 36, T3, 8, 'center');
+  } else {
+    text(ctx, `${player.hp}`, 22, 52, T3, 9);
+    text(ctx, `${stats.maxHp}`, 22 + bw, 52, T3, 9, 'right');
+  }
 
-  bar(ctx, 22, 64, bw, 4, player.exp, player.nextExp, EXP_BAR);
+  bar(ctx, 22, compact ? 42 : 64, bw, compact ? 3 : 4, player.exp, player.nextExp, EXP_BAR);
 
   // Stats line
   const statsStr = compact
     ? `LV${player.level}  A${stats.attack}  D${stats.defense}  C${Math.round(stats.crit * 100)}%`
     : `LV ${player.level}   ATK ${stats.attack}   DEF ${stats.defense}   CRI ${Math.round(stats.crit * 100)}%   LS ${Math.round(stats.lifeSteal * 100)}%`;
-  text(ctx, statsStr, 22, compact ? 72 : 80, T2, compact ? 10 : 11);
+  text(ctx, statsStr, 22, compact ? 52 : 80, T2, compact ? 9 : 11);
 
-  // Bottom hint
-  const nearShop = Math.hypot(player.pos.x - SHOP_POS.x, player.pos.y - SHOP_POS.y) < 180;
-  const hint = nearShop
-    ? 'E \u5546\u5E97   P \u4E70\u836F'
-    : compact ? '\u6447\u6746\u79FB\u52A8  \u653B\u51FB  \u6280\u80FD  \u80CC\u5305' : 'WASD \u79FB\u52A8  SPACE \u653B\u51FB  1/2/3 \u6280\u80FD  I \u80CC\u5305  S \u4FDD\u5B58  R \u91CD\u7F6E';
-  text(ctx, hint, 14, h - 22, T3, compact ? 10 : 11);
+  // Auto-battle status
+  const autoLabel = state.autoBattle ? 'AUTO ON' : 'AUTO OFF';
+  const autoColor = state.autoBattle ? ACCENT : T3;
+  if (compact) {
+    text(ctx, autoLabel, pw - 8, 36, autoColor, 9, 'right');
+  } else {
+    text(ctx, autoLabel, 280, 52, autoColor, 9, 'left');
+  }
+
+  // Version number (bottom right)
+  text(ctx, 'v1.1.1', w - 10, h - 18, T3, 10, 'right');
+
+  // Stage name in HUD header
+  const stageName = getStageById(state.stage.stageId)?.name ?? '';
+  if (compact) {
+    text(ctx, stageName, pw - 8, 46, T3, 9, 'right');
+  } else {
+    text(ctx, stageName, 280, 80, T3, 9, 'left');
+  }
+
+  // Bottom hint — side-scroll controls
+  if (!compact) {
+    text(ctx, 'A/D 移动  SPACE 跳跃/攻击  V 自动  1/2/3 技能  I 背包  S 保存  R 重置', 14, h - 22, T3, 11);
+  }
 
   drawSkills(ctx, state, w, h);
   if (state.messages.length > 0) drawMessages(ctx, state.messages, w, h);
@@ -510,8 +501,11 @@ function drawHud(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: 
   if (state.ui.panel === 'itemDetail') drawItemDetail(ctx, state, w, h);
   if (state.ui.panel === 'classSelect') drawClassSelect(ctx, state, w, h);
   if (state.ui.panel === 'talents') drawTalentTree(ctx, state, w, h);
-  drawMinimap(ctx, state, w, h);
-  if (!player.alive) drawDeath(ctx, w, h);
+  if (state.ui.panel === 'stageSelect') drawStageSelect(ctx, state, w, h);
+  drawStageProgressBar(ctx, state, w, h);
+  if (!player.alive) drawDeath(ctx, state, w, h);
+  if (state.ui.panel === 'stageClear') drawStageClearPanel(ctx, state, w, h);
+  if (state.ui.panel === 'offlineReward') drawOfflineRewardModal(ctx, state, w, h);
   if (state.showHelp) drawHelp(ctx, w);
 }
 
@@ -519,9 +513,9 @@ function drawSkills(ctx: CanvasRenderingContext2D, state: GameState, w: number, 
   const compact = isPortrait(w, h);
   for (let i = 0; i < state.skills.length; i++) {
     const skill = state.skills[i];
-    const x = compact ? w - 44 : w - 240 + i * 76;
-    const y = compact ? h - 268 + i * 52 : h - 56;
-    const size = compact ? 44 : 48;
+    const x = compact ? w / 2 - 40 + i * 40 : w - 240 + i * 76;
+    const y = compact ? h - 58 : h - 56;
+    const size = compact ? 40 : 48;
     const onCd = skill.remaining > 0;
 
     ctx.strokeStyle = onCd ? BORDER : skill.color;
@@ -753,7 +747,7 @@ function drawItemDetail(ctx: CanvasRenderingContext2D, state: GameState, w: numb
     text(ctx, `\u6062\u590D\u91CF  ${item.heal} HP`, dx + 24, sy, SUCCESS, 13);
     sy += 22;
   } else if (item.type === 'skillBook') {
-    const book = item as SkillBookItem;
+    const book = item;
     text(ctx, `学习技能: ${book.name.replace('技能书·', '')}`, dx + 24, sy, ACCENT, 13);
     sy += 22;
   }
@@ -1003,7 +997,7 @@ function drawMessages(ctx: CanvasRenderingContext2D, messages: GameMessage[], w:
   const boxW = compact ? w - 24 : 520;
   const x = compact ? 12 : w / 2 - 260;
   const rowH = 28;
-  const baseY = compact ? h - 300 : h - 80;
+  const baseY = compact ? h - 180 : h - 80;
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
@@ -1018,11 +1012,350 @@ function drawMessages(ctx: CanvasRenderingContext2D, messages: GameMessage[], w:
   }
 }
 
-function drawDeath(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+function drawDeath(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
   ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
   ctx.fillRect(0, 0, w, h);
-  text(ctx, 'SYSTEM FAILURE', w / 2, h / 2 - 36, WARN, 28, 'center');
-  text(ctx, 'SPACE / ATTACK  TO  RESPAWN', w / 2, h / 2 + 10, T2, 14, 'center');
+
+  const stage = getStageById(state.stage.stageId);
+  const panelW = Math.min(320, w - 40);
+  const panelH = Math.min(240, h - 60);
+  const px = (w - panelW) / 2;
+  const py = (h - panelH) / 2;
+
+  panel(ctx, px, py, panelW, panelH, 16);
+
+  text(ctx, '关卡失败', px + panelW / 2, py + 24, WARN, 20, 'center');
+  if (stage) {
+    text(ctx, stage.name, px + panelW / 2, py + 56, T2, 13, 'center');
+  }
+  text(ctx, `用时 ${state.stage.elapsed.toFixed(1)}s`, px + panelW / 2, py + 80, T3, 11, 'center');
+  text(ctx, `击杀 ${state.stage.killedTotal}`, px + panelW / 2, py + 98, T3, 11, 'center');
+
+  // Buttons
+  const btnW = Math.floor((panelW - 48) / 2);
+  const btnH = 40;
+  const btnY = py + panelH - 56;
+  const retryX = px + 16;
+  const returnX = px + 16 + btnW + 16;
+
+  // Retry button
+  ctx.fillStyle = 'rgba(10, 132, 255, 0.12)';
+  roundRect(ctx, retryX, btnY, btnW, btnH, 8);
+  ctx.fill();
+  ctx.strokeStyle = ACCENT;
+  ctx.lineWidth = 0.5;
+  roundRect(ctx, retryX, btnY, btnW, btnH, 8);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+  text(ctx, '重试', retryX + btnW / 2, btnY + 12, ACCENT, 14, 'center');
+
+  // Return button
+  ctx.fillStyle = GLASS;
+  roundRect(ctx, returnX, btnY, btnW, btnH, 8);
+  ctx.fill();
+  ctx.strokeStyle = BORDER_H;
+  ctx.lineWidth = 0.5;
+  roundRect(ctx, returnX, btnY, btnW, btnH, 8);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+  text(ctx, '返回', returnX + btnW / 2, btnY + 12, T2, 14, 'center');
+}
+
+// ─── Offline Reward Modal ──────────────────────────────────────────
+
+function drawOfflineRewardModal(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+  ctx.fillRect(0, 0, w, h);
+
+  const reward = state.ui.offlineReward;
+  if (!reward) return;
+
+  const panelW = Math.min(340, w - 40);
+  const panelH = Math.min(300, h - 60);
+  const px = (w - panelW) / 2;
+  const py = (h - panelH) / 2;
+
+  panel(ctx, px, py, panelW, panelH, 16);
+
+  // Title
+  text(ctx, '离线收益', px + panelW / 2, py + 24, ACCENT, 20, 'center');
+
+  // Offline time
+  const hours = Math.floor(reward.offlineSeconds / 3600);
+  const minutes = Math.floor((reward.offlineSeconds % 3600) / 60);
+  const timeStr = hours > 0 ? `${hours}小时${minutes}分钟` : `${minutes}分钟`;
+  text(ctx, `离线 ${timeStr}${reward.capped ? '（已封顶）' : ''}`, px + panelW / 2, py + 54, T2, 13, 'center');
+
+  // Stage name
+  const stage = getStageById(reward.stageId);
+  if (stage) {
+    text(ctx, `挂机关卡：${stage.name}`, px + 24, py + 82, T2, 12);
+  }
+
+  // Divider
+  ctx.strokeStyle = BORDER;
+  ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(px + 20, py + 104); ctx.lineTo(px + panelW - 20, py + 104); ctx.stroke();
+  ctx.lineWidth = 1;
+
+  // Rewards
+  let ry = py + 114;
+  text(ctx, '收益', px + 24, ry, T3, 10);
+  ry += 18;
+  text(ctx, `金币  +${reward.gold}`, px + 24, ry, GOLD, 14);
+  ry += 22;
+  text(ctx, `经验  +${reward.exp}`, px + 24, ry, EXP_BAR, 14);
+  ry += 22;
+  text(ctx, `预估击杀  ${reward.estimatedKills}`, px + 24, ry, T2, 12);
+  ry += 20;
+
+  // Items
+  if (reward.items.length > 0) {
+    text(ctx, `获得 ${reward.items.length} 件物品`, px + 24, ry, SUCCESS, 12);
+    ry += 18;
+    for (const item of reward.items.slice(0, 3)) {
+      const color = item.type === 'equipment' ? rarityColor((item as import('./types').EquipmentItem).rarity) : T2;
+      text(ctx, `◇ ${item.name}`, px + 32, ry, color, 11);
+      ry += 16;
+    }
+    if (reward.items.length > 3) {
+      text(ctx, `…还有 ${reward.items.length - 3} 件`, px + 32, ry, T3, 10);
+    }
+  }
+
+  // Claim button
+  const btnW = panelW - 48;
+  const btnH = 42;
+  const btnX = px + 24;
+  const btnY = py + panelH - 58;
+
+  ctx.fillStyle = 'rgba(10, 132, 255, 0.12)';
+  roundRect(ctx, btnX, btnY, btnW, btnH, 10);
+  ctx.fill();
+  ctx.strokeStyle = ACCENT;
+  ctx.lineWidth = 0.5;
+  roundRect(ctx, btnX, btnY, btnW, btnH, 10);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+  text(ctx, '领取', btnX + btnW / 2, btnY + 13, ACCENT, 15, 'center');
+}
+
+// ─── Stage Clear Panel ─────────────────────────────────────────────
+
+function drawStageClearPanel(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  ctx.fillRect(0, 0, w, h);
+
+  const stage = getStageById(state.stage.stageId);
+  const clearInfo = state.ui.stageClear;
+  if (!stage || !clearInfo) return;
+
+  const panelW = Math.min(360, w - 40);
+  const panelH = Math.min(340, h - 60);
+  const px = (w - panelW) / 2;
+  const py = (h - panelH) / 2;
+
+  panel(ctx, px, py, panelW, panelH, 16);
+
+  // Title
+  text(ctx, '关卡通关', px + panelW / 2, py + 24, SUCCESS, 20, 'center');
+  text(ctx, stage.name, px + panelW / 2, py + 54, T1, 14, 'center');
+
+  // Stats
+  text(ctx, `用时 ${state.stage.elapsed.toFixed(1)}s`, px + 24, py + 82, T2, 12);
+  text(ctx, `击杀 ${state.stage.killedTotal}`, px + panelW - 24, py + 82, T2, 12, 'right');
+
+  // Divider
+  ctx.strokeStyle = BORDER;
+  ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(px + 20, py + 104); ctx.lineTo(px + panelW - 20, py + 104); ctx.stroke();
+  ctx.lineWidth = 1;
+
+  // Rewards
+  let ry = py + 114;
+  text(ctx, '奖励', px + 24, ry, T3, 10);
+  ry += 18;
+  text(ctx, `金币  +${clearInfo.reward.gold}${clearInfo.firstClear ? ` +${clearInfo.reward.firstClearBonus?.gold ?? 0} 首通` : ''}`, px + 24, ry, GOLD, 13);
+  ry += 20;
+  text(ctx, `经验  +${clearInfo.reward.exp}${clearInfo.firstClear ? ` +${clearInfo.reward.firstClearBonus?.exp ?? 0} 首通` : ''}`, px + 24, ry, EXP_BAR, 13);
+  ry += 20;
+
+  // First clear bonus
+  if (clearInfo.firstClear) {
+    text(ctx, '首通奖励已发放!', px + 24, ry, SUCCESS, 12);
+    ry += 20;
+  }
+
+  // Items
+  if (clearInfo.items.length > 0) {
+    for (const item of clearInfo.items) {
+      const color = item.type === 'equipment' ? rarityColor((item as import('./types').EquipmentItem).rarity) : T2;
+      text(ctx, `◇ ${item.name}`, px + 24, ry, color, 12);
+      ry += 18;
+    }
+  }
+
+  // Continue button
+  const btnW = panelW - 48;
+  const btnH = 42;
+  const btnX = px + 24;
+  const btnY = py + panelH - 58;
+
+  ctx.fillStyle = 'rgba(48, 209, 88, 0.12)';
+  roundRect(ctx, btnX, btnY, btnW, btnH, 10);
+  ctx.fill();
+  ctx.strokeStyle = SUCCESS;
+  ctx.lineWidth = 0.5;
+  roundRect(ctx, btnX, btnY, btnW, btnH, 10);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+  text(ctx, '继续', btnX + btnW / 2, btnY + 13, SUCCESS, 15, 'center');
+}
+
+// ─── Stage Progress Bar ─────────────────────────────────────────────
+
+function drawStageProgressBar(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
+  const stage = getStageById(state.stage.stageId);
+  if (!stage) return;
+
+  const runtime = state.stage;
+  const compact = isPortrait(w, h);
+
+  const barW = compact ? w - 24 : Math.min(400, w - 60);
+  const barH = compact ? 28 : 32;
+  const barX = (w - barW) / 2;
+  const barY = compact ? h - 108 : 10;
+
+  // Background
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  roundRect(ctx, barX, barY, barW, barH, 8);
+  ctx.fill();
+  ctx.strokeStyle = BORDER;
+  ctx.lineWidth = 0.5;
+  roundRect(ctx, barX, barY, barW, barH, 8);
+  ctx.stroke();
+  ctx.lineWidth = 1;
+
+  // Stage name
+  text(ctx, stage.name, barX + 8, barY + 4, T3, compact ? 8 : 9);
+
+  // Progress track
+  const trackX = barX + 8;
+  const trackW = barW - 16;
+  const trackY = barY + barH - 8;
+  const trackH = 3;
+
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  roundRect(ctx, trackX, trackY, trackW, trackH, 1);
+  ctx.fill();
+
+  // Progress fill
+  const progress = Math.min(1, state.player.pos.x / stage.width);
+  if (progress > 0) {
+    ctx.fillStyle = ACCENT;
+    roundRect(ctx, trackX, trackY, trackW * progress, trackH, 1);
+    ctx.fill();
+  }
+
+  // Wave markers
+  for (const wave of stage.waves) {
+    const triggerX = wave.trigger.type === 'time' ? 0.5 : (wave.trigger.type === 'position' || wave.trigger.type === 'boss_zone' ? wave.trigger.x : 0);
+    const markerPos = triggerX / stage.width;
+    const mx = trackX + markerPos * trackW;
+    const triggered = runtime.triggeredWaveIds.includes(wave.id);
+
+    if (wave.trigger.type === 'boss_zone') {
+      text(ctx, 'Ω', mx, barY + 3, triggered ? WARN : T3, compact ? 10 : 12, 'center');
+    } else {
+      ctx.fillStyle = triggered ? 'rgba(255,69,58,0.6)' : 'rgba(255,255,255,0.15)';
+      ctx.beginPath();
+      ctx.arc(mx, trackY + 1.5, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Player marker (@)
+  const playerMarkerX = trackX + progress * trackW;
+  text(ctx, '@', playerMarkerX, barY + 2, SUCCESS, compact ? 10 : 12, 'center');
+
+  // End marker
+  text(ctx, '|', trackX + trackW, barY + 2, T3, compact ? 10 : 12, 'center');
+
+  // Phase indicator
+  const phaseLabel = runtime.phase === 'boss' ? 'BOSS' : runtime.phase === 'combat' ? '战斗' : runtime.phase === 'running' ? '推进' : '';
+  if (phaseLabel) {
+    text(ctx, phaseLabel, barX + barW - 8, barY + 4, runtime.phase === 'boss' ? WARN : T3, compact ? 8 : 9, 'right');
+  }
+}
+
+// ─── Stage Select ───────────────────────────────────────────────────
+
+function drawStageSelect(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+  ctx.fillRect(0, 0, w, h);
+
+  const panelW = Math.min(400, w - 32);
+  const panelH = Math.min(480, h - 40);
+  const px = (w - panelW) / 2;
+  const py = (h - panelH) / 2;
+
+  panel(ctx, px, py, panelW, panelH, 16);
+
+  // Title
+  text(ctx, '选择关卡', px + panelW / 2, py + 20, T1, 18, 'center');
+
+  // Close X
+  ctx.save();
+  ctx.translate(px + panelW - 20, py + 18);
+  ctx.rotate(Math.PI / 4);
+  ctx.fillStyle = T2;
+  ctx.fillRect(-7, -0.75, 14, 1.5);
+  ctx.fillRect(-0.75, -7, 1.5, 14);
+  ctx.restore();
+
+  // Stage list
+  const cardH = 56;
+  const gap = 8;
+  const startY = py + 52;
+  const progress = state.progress;
+
+  for (let i = 0; i < STAGES.length; i++) {
+    const stage = STAGES[i];
+    const cy = startY + i * (cardH + gap);
+    if (cy + cardH > py + panelH - 16) break;
+
+    const record = progress.records[stage.id];
+    const isCleared = record?.cleared ?? false;
+    const isUnlocked = i === 0 || (progress.highestUnlockedStageId === stage.id) ||
+      STAGES.findIndex(s => s.id === progress.highestUnlockedStageId) >= i;
+    const isCurrent = progress.currentStageId === stage.id;
+
+    // Card background
+    ctx.fillStyle = isCurrent ? 'rgba(10, 132, 255, 0.08)' : GLASS;
+    roundRect(ctx, px + 16, cy, panelW - 32, cardH, 10);
+    ctx.fill();
+    ctx.strokeStyle = isCurrent ? ACCENT : isCleared ? SUCCESS : isUnlocked ? BORDER_H : BORDER;
+    ctx.lineWidth = isCurrent ? 1 : 0.5;
+    roundRect(ctx, px + 16, cy, panelW - 32, cardH, 10);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+
+    // Status icon
+    const statusIcon = isCleared ? '✓' : isCurrent ? '▶' : isUnlocked ? '▶' : '⊘';
+    const statusColor = isCleared ? SUCCESS : isCurrent ? ACCENT : isUnlocked ? T2 : T3;
+    text(ctx, statusIcon, px + 32, cy + 12, statusColor, 16, 'center');
+
+    // Name and level
+    const nameColor = isUnlocked ? T1 : T3;
+    text(ctx, stage.name, px + 52, cy + 10, nameColor, 14);
+    text(ctx, `LV${stage.recommendedLevel}${stage.bossStage ? '  BOSS' : ''}`, px + 52, cy + 30, isUnlocked ? T2 : T3, 10);
+
+    // Record
+    if (record && isCleared) {
+      const timeStr = record.bestTime ? `${Math.floor(record.bestTime / 60)}:${String(Math.floor(record.bestTime % 60)).padStart(2, '0')}` : '--:--';
+      text(ctx, `最佳 ${timeStr}  ×${record.clearCount}`, px + panelW - 24, cy + 20, T3, 9, 'right');
+    }
+  }
 }
 
 function drawHelp(ctx: CanvasRenderingContext2D, w: number): void {
@@ -1038,14 +1371,14 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number): void {
 
 type TouchButton = readonly [string, number, number, number, string];
 
-function drawTouchControls(ctx: CanvasRenderingContext2D, move: { x: number; y: number }, w: number, h: number): void {
+function drawTouchControls(ctx: CanvasRenderingContext2D, move: { x: number; y: number }, w: number, h: number, state: GameState): void {
   const compact = isPortrait(w, h);
 
-  // Joystick
+  // Joystick — smaller in portrait to free up space
   ctx.globalAlpha = 0.5;
-  const stickSize = compact ? 100 : 110;
-  const stickX = compact ? 18 : 32;
-  const stickY = h - (compact ? 130 : 146);
+  const stickSize = compact ? 88 : 110;
+  const stickX = compact ? 12 : 32;
+  const stickY = h - (compact ? 108 : 146);
 
   ctx.strokeStyle = BORDER_H;
   ctx.lineWidth = 0.5;
@@ -1055,9 +1388,9 @@ function drawTouchControls(ctx: CanvasRenderingContext2D, move: { x: number; y: 
 
   // Joystick thumb
   ctx.fillStyle = 'rgba(255,255,255,0.15)';
-  const thumbSize = 32;
-  const tx = stickX + stickSize / 2 + move.x * 28 - thumbSize / 2;
-  const ty = stickY + stickSize / 2 + move.y * 28 - thumbSize / 2;
+  const thumbSize = compact ? 28 : 32;
+  const tx = stickX + stickSize / 2 + move.x * (compact ? 24 : 28) - thumbSize / 2;
+  const ty = stickY + stickSize / 2 + move.y * (compact ? 24 : 28) - thumbSize / 2;
   roundRect(ctx, tx, ty, thumbSize, thumbSize, 8);
   ctx.fill();
 
@@ -1066,18 +1399,15 @@ function drawTouchControls(ctx: CanvasRenderingContext2D, move: { x: number; y: 
   const rstColor = state.resetConfirm ? WARN : T3;
   const buttons: TouchButton[] = compact
     ? [
-        // Skills — right column, evenly spaced
-        ['1', w - 44, h - 268, 22, '#FF9F0A'],
-        ['2', w - 44, h - 216, 22, ACCENT],
-        ['3', w - 44, h - 164, 22, '#BF5AF2'],
         // Attack — bottom right
-        ['ATK', w - 56, h - 56, 40, WARN],
-        // Header row — top right, y=128
-        ['BAG', w - 40, 128, 22, SUCCESS],
-        ['E', w - 92, 128, 22, GOLD],
-        ['USE', w - 144, 128, 22, ACCENT],
-        ['P', w - 196, 128, 22, WARN],
-        [rstLabel, w - 248, 128, 22, rstColor]
+        ['ATK', w - 50, h - 50, 34, WARN],
+        // Skills drawn by drawSkills at (w/2-40+i*40, h-58) — touch hit-test in input.ts
+        // Utility row — below minimap at y=112, compact spacing
+        ['BAG', 30, 112, 16, SUCCESS],
+        ['E', 70, 112, 16, GOLD],
+        ['P', 110, 112, 16, WARN],
+        [rstLabel, 150, 112, 16, rstColor],
+        [state.autoBattle ? '自动 ON' : '自动 OFF', 190, 112, 16, state.autoBattle ? ACCENT : T3]
       ]
     : [
         ['1', w - 170, h - 120, 32, '#FF9F0A'],
@@ -1088,7 +1418,8 @@ function drawTouchControls(ctx: CanvasRenderingContext2D, move: { x: number; y: 
         ['E', w - 116, 56, 24, GOLD],
         ['USE', w - 174, 56, 24, ACCENT],
         ['P', w - 232, 56, 24, WARN],
-        [rstLabel, w - 290, 56, 24, rstColor]
+        [rstLabel, w - 290, 56, 24, rstColor],
+        [state.autoBattle ? 'AUTO ON' : 'AUTO OFF', w - 348, 56, 24, state.autoBattle ? ACCENT : T3]
       ];
 
   for (const [label, x, y, r, color] of buttons) {

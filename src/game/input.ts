@@ -3,6 +3,7 @@ export class Input {
   pointer = { x: 0, y: 0, down: false };
   move = { x: 0, y: 0 };
   actions = new Set<string>();
+  jumpPressed = false;
   uiBlocking = false;
   scrolled = false;
   private canvas: HTMLCanvasElement;
@@ -12,9 +13,14 @@ export class Input {
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     window.addEventListener('keydown', (event) => {
-      this.keys.add(event.key.toLowerCase());
-      if ([' ', '1', '2', '3', 'i', 'b', 'h', 'e', 'r', 'v', 'p', 't', 'enter', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(event.key.toLowerCase())) event.preventDefault();
-      this.actions.add(event.key.toLowerCase());
+      const key = event.key.toLowerCase();
+      this.keys.add(key);
+      if ([' ', '1', '2', '3', 'i', 'b', 'h', 'e', 'r', 'v', 'p', 't', 'enter', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) event.preventDefault();
+      this.actions.add(key);
+      // 横版跳跃输入（仅首次按下，不重复触发）
+      if (!event.repeat && (key === ' ' || key === 'w' || key === 'arrowup')) {
+        this.jumpPressed = true;
+      }
     });
     window.addEventListener('keyup', (event) => this.keys.delete(event.key.toLowerCase()));
     canvas.addEventListener('pointerdown', (event) => this.onPointerDown(event));
@@ -53,6 +59,7 @@ export class Input {
 
   endFrame(): void {
     this.actions.clear();
+    this.jumpPressed = false;
   }
 
   private pointerPosition(event: PointerEvent): { x: number; y: number; rect: DOMRect } {
@@ -78,8 +85,13 @@ export class Input {
     }
 
     const action = this.hitActionButton(x, y, this.canvas.width, this.canvas.height);
-    if (action) this.actions.add(action);
-    else this.actions.add('tap');
+    if (action) {
+      this.actions.add(action);
+      // 触屏攻击按钮同时触发跳跃（横版模式）
+      if (action === ' ') this.jumpPressed = true;
+    } else {
+      this.actions.add('tap');
+    }
   }
 
   private onPointerMove(event: PointerEvent): void {
@@ -113,15 +125,12 @@ export class Input {
     const portrait = h > w * 1.12;
     const buttons = portrait
       ? [
-          { action: '1', x: w - 44, y: h - 268, r: 22 },
-          { action: '2', x: w - 44, y: h - 216, r: 22 },
-          { action: '3', x: w - 44, y: h - 164, r: 22 },
-          { action: ' ', x: w - 56, y: h - 56, r: 40 },
-          { action: 'i', x: w - 40, y: 128, r: 22 },
-          { action: 'e', x: w - 92, y: 128, r: 22 },
-          { action: 'enter', x: w - 144, y: 128, r: 22 },
-          { action: 'p', x: w - 196, y: 128, r: 22 },
-          { action: 'r', x: w - 248, y: 128, r: 22 }
+          { action: ' ', x: w - 50, y: h - 50, r: 34 },
+          { action: 'i', x: 30, y: 112, r: 16 },
+          { action: 'e', x: 70, y: 112, r: 16 },
+          { action: 'p', x: 110, y: 112, r: 16 },
+          { action: 'r', x: 150, y: 112, r: 16 },
+          { action: 'v', x: 190, y: 112, r: 16 }
         ]
       : [
           { action: '1', x: w - 170, y: h - 120, r: 32 },
@@ -132,10 +141,19 @@ export class Input {
           { action: 'e', x: w - 116, y: 56, r: 24 },
           { action: 'enter', x: w - 174, y: 56, r: 24 },
           { action: 'p', x: w - 232, y: 56, r: 24 },
-          { action: 'r', x: w - 290, y: 56, r: 24 }
+          { action: 'r', x: w - 290, y: 56, r: 24 },
+          { action: 'v', x: w - 348, y: 56, r: 24 }
         ];
     for (const button of buttons) {
       if (Math.hypot(x - button.x, y - button.y) <= button.r) return button.action;
+    }
+    // Portrait skill buttons — drawn by drawSkills at bottom center
+    if (portrait) {
+      const skillY = h - 58;
+      for (let i = 0; i < 3; i++) {
+        const sx = w / 2 - 40 + i * 40;
+        if (Math.hypot(x - sx, y - skillY) <= 20) return `${i + 1}`;
+      }
     }
     return null;
   }

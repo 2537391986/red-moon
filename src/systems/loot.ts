@@ -3,12 +3,20 @@ import { SKILL_DEFS } from '../data/skills';
 import type { Affix, Drop, EquipSlot, EquipmentItem, Item, Rarity, SkillBookItem, Stats } from '../game/types';
 
 let nextId = 1;
+try {
+  const saved = localStorage.getItem('mir-pwa-nextId');
+  if (saved) nextId = parseInt(saved, 10);
+} catch (e) { /* ignore */ }
+function saveNextId(): void {
+  try { localStorage.setItem('mir-pwa-nextId', String(nextId)); } catch (e) { /* ignore */ }
+}
 const slots: EquipSlot[] = ['weapon', 'armor', 'helmet', 'necklace', 'ring'];
 const rarities: Rarity[] = ['普通', '精良', '稀有', '史诗', '传说'];
 const rarityBonus: Record<Rarity, number> = { 普通: 1, 精良: 1.35, 稀有: 1.8, 史诗: 2.45, 传说: 3.3 };
 
 export function uid(prefix: string): string {
   nextId += 1;
+  saveNextId();
   return `${prefix}-${Date.now().toString(36)}-${nextId.toString(36)}`;
 }
 
@@ -87,12 +95,22 @@ export function makeEquipment(level: number, boss = false): EquipmentItem {
   return { id: uid('equip'), type: 'equipment', name, slot, rarity, level, stats, affixes, price: 35 + power * (12 + rank * 8) };
 }
 
-/** 生成技能书掉落 */
-export function makeSkillBook(level: number): SkillBookItem {
+/** 生成技能书掉落 — 按玩家等级过滤 */
+export function makeSkillBook(playerLevel: number): SkillBookItem {
+  // 简化：10级以下不掉落高级技能书
+  if (playerLevel < 10) {
+    // 只掉落基础技能
+    const basicSkills = ['power_strike', 'tough_skin'];
+    const skillId = basicSkills[Math.floor(Math.random() * basicSkills.length)];
+    const def = SKILL_DEFS[skillId];
+    return { id: uid('skillbook'), type: 'skillBook', name: `技能书·${def.name}`, skillId, price: 50 + playerLevel * 10 };
+  }
+  
+  // 10级以上可以掉落任何技能
   const ids = Object.keys(SKILL_DEFS);
   const skillId = ids[Math.floor(Math.random() * ids.length)];
   const def = SKILL_DEFS[skillId];
-  return { id: uid('skillbook'), type: 'skillBook', name: `技能书·${def.name}`, skillId, price: 50 + level * 10 };
+  return { id: uid('skillbook'), type: 'skillBook', name: `技能书·${def.name}`, skillId, price: 50 + playerLevel * 10 };
 }
 
 export function makeDrops(x: number, y: number, level: number, boss: boolean): Drop[] {

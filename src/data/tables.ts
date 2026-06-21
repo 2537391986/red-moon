@@ -16,12 +16,12 @@ export const EQUIP_PREFIX: Record<EquipSlot, string[]> = {
   ring: ['古铜戒指', '骷髅戒指', '力量戒指', '圣战戒指', '赤月戒']
 };
 
-export const MONSTER_BASE: Record<MonsterKind, { color: string; hp: number; attack: number; defense: number; speed: number; exp: number }> = {
-  稻草人: { color: '#c8a45f', hp: 36, attack: 6, defense: 1, speed: 36, exp: 12 },
-  半兽人: { color: '#7fac58', hp: 72, attack: 13, defense: 4, speed: 44, exp: 32 },
-  骷髅战士: { color: '#d6d0c0', hp: 128, attack: 22, defense: 8, speed: 50, exp: 76 },
-  沃玛卫士: { color: '#7e67bd', hp: 260, attack: 38, defense: 16, speed: 56, exp: 180 },
-  赤月恶魔: { color: '#bf2a24', hp: 1600, attack: 88, defense: 36, speed: 42, exp: 1200 }
+export const MONSTER_BASE: Record<MonsterKind, { color: string; glyph: string; hp: number; attack: number; defense: number; speed: number; exp: number }> = {
+  稻草人: { color: '#c8a45f', glyph: '#', hp: 36, attack: 6, defense: 1, speed: 36, exp: 12 },
+  半兽人: { color: '#7fac58', glyph: '&', hp: 72, attack: 13, defense: 4, speed: 44, exp: 32 },
+  骷髅战士: { color: '#d6d0c0', glyph: '%', hp: 128, attack: 22, defense: 8, speed: 50, exp: 76 },
+  沃玛卫士: { color: '#7e67bd', glyph: 'W', hp: 260, attack: 38, defense: 16, speed: 56, exp: 180 },
+  赤月恶魔: { color: '#bf2a24', glyph: 'Ω', hp: 1600, attack: 88, defense: 36, speed: 42, exp: 1200 }
 };
 
 /** 特殊词条定义 —— 扩展只需追加条目 */

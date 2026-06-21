@@ -44,7 +44,7 @@ export type Stats = {
 export type AffixDef = {
   id: string;
   name: string;
-  description: string;       // 用 {v} 作数值占位符
+  description: string;
   minRarity: Rarity;
   weight: number;
 };
@@ -154,6 +154,17 @@ export type Player = {
   talentPoints: number;
   talents: Record<string, number>;
   regenTimer: number;
+
+  // 横版物理
+  velY: number;
+  grounded: boolean;
+  coyoteTimer: number;
+  jumpCount: number;
+  maxJumpCount: number;
+
+  // 自动战斗扩展
+  attackSpeed?: number;
+  autoRunSpeed?: number;
 };
 
 export type MonsterKind = '稻草人' | '半兽人' | '骷髅战士' | '沃玛卫士' | '赤月恶魔';
@@ -180,6 +191,8 @@ export type Monster = {
   action: AttackAction | null;
   hitstun: number;
   enraged?: boolean;
+  glyph?: string;
+  color?: string;
 };
 
 export type Drop = {
@@ -192,10 +205,7 @@ export type Drop = {
 
 export type Zone = {
   name: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+  x: number; y: number; w: number; h: number;
   level: number;
   color: string;
 };
@@ -205,14 +215,23 @@ export type FloatingText = {
   pos: Vec2;
   color: string;
   ttl: number;
+  vel?: Vec2;
 };
 
-export type UiPanel = 'none' | 'bag' | 'shop' | 'itemDetail' | 'classSelect' | 'talents';
+export type UiPanel = 'none' | 'bag' | 'shop' | 'itemDetail' | 'classSelect' | 'talents'
+  | 'stageSelect' | 'offlineReward' | 'stageClear' | 'death';
 
 export type UiState = {
   panel: UiPanel;
   selectedIndex: number;
   scroll: number;
+  offlineReward?: OfflineReward;
+  stageClear?: {
+    stageId: string;
+    reward: StageReward;
+    firstClear: boolean;
+    items: Item[];
+  };
 };
 
 export type GameMessage = { text: string; timer: number };
@@ -232,4 +251,156 @@ export type GameState = {
   ui: UiState;
   showHelp: boolean;
   resetConfirm: boolean;
+  hitstop: number;
+  autoBattle: boolean;
+
+  // 横版关卡系统
+  stage: StageRuntime;
+  progress: ProgressState;
+  lastOnlineTime: number;
+};
+
+/* ──────── 横版关卡系统 ──────── */
+
+export type SideScrollPhysics = {
+  velY: number;
+  grounded: boolean;
+  coyoteTimer: number;
+  jumpCount: number;
+  maxJumpCount: number;
+};
+
+export type StageClearType =
+  | 'kill_all'
+  | 'reach_end'
+  | 'kill_boss'
+  | 'kill_all_and_reach_end';
+
+export type StageClearCondition = {
+  type: StageClearType;
+  targetX?: number;
+  bossId?: string;
+};
+
+export type StageReward = {
+  gold: number;
+  exp: number;
+  chest?: {
+    rarityBonus: number;
+    itemCount: number;
+  };
+  firstClearBonus?: {
+    gold: number;
+    exp: number;
+    guaranteedItemRarity?: Rarity;
+  };
+};
+
+export type StageSpawn = {
+  monsterKind: MonsterKind;
+  count: number;
+  levelOffset?: number;
+  eliteChance?: number;
+  boss?: boolean;
+  offsetX?: number;
+  offsetY?: number;
+  spacing?: number;
+};
+
+export type StageWaveTrigger =
+  | { type: 'time'; at: number }
+  | { type: 'position'; x: number }
+  | { type: 'boss_zone'; x: number };
+
+export type StageWave = {
+  id: string;
+  trigger: StageWaveTrigger;
+  spawns: StageSpawn[];
+  triggered?: boolean;
+  blockAdvance?: boolean;
+  message?: string;
+};
+
+export type StageTheme = 'plain' | 'forest' | 'ruin' | 'cave' | 'castle' | 'void';
+
+export type StageConfig = {
+  id: string;
+  name: string;
+  index: number;
+  recommendedLevel: number;
+  width: number;
+  groundY: number;
+  theme: StageTheme;
+  bossStage: boolean;
+  clearCondition: StageClearCondition;
+  waves: StageWave[];
+  reward: StageReward;
+  unlock: {
+    previousStageId?: string;
+    requiredLevel?: number;
+  };
+  offline: {
+    baseGoldPerMin: number;
+    baseExpPerMin: number;
+  };
+  difficulty: {
+    monsterHpMultiplier: number;
+    monsterAtkMultiplier: number;
+    monsterDefMultiplier: number;
+    monsterExpMultiplier: number;
+  };
+};
+
+export type StagePhase =
+  | 'idle'
+  | 'intro'
+  | 'running'
+  | 'combat'
+  | 'boss'
+  | 'clearing'
+  | 'cleared'
+  | 'failed'
+  | 'transition';
+
+export type StageRuntime = {
+  stageId: string;
+  phase: StagePhase;
+  elapsed: number;
+  playerX: number;
+  triggeredWaveIds: string[];
+  killedMonsterIds: string[];
+  spawnedTotal: number;
+  killedTotal: number;
+  bossSpawned: boolean;
+  bossKilled: boolean;
+  reachedEnd: boolean;
+  clearTimer: number;
+  transitionTimer: number;
+};
+
+export type StageRecord = {
+  cleared: boolean;
+  bestTime?: number;
+  clearCount: number;
+  firstClearedAt?: number;
+};
+
+export type ProgressState = {
+  currentStageId: string;
+  highestUnlockedStageId: string;
+  records: Record<string, StageRecord>;
+  totalOfflineSeconds: number;
+  totalStagesCleared: number;
+};
+
+export type OfflineReward = {
+  offlineSeconds: number;
+  cappedSeconds: number;
+  stageId: string;
+  gold: number;
+  exp: number;
+  estimatedKills: number;
+  itemRolls: number;
+  items: Item[];
+  capped: boolean;
 };
