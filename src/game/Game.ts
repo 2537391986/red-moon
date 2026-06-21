@@ -130,7 +130,7 @@ function createState(): GameState {
     ui: { panel: isNewGame ? 'classSelect' : 'none', selectedIndex: 0, scroll: 0 },
     showHelp: !isNewGame,
     resetConfirm: false,
-    autoBattle: false,
+    autoBattle: true,
     hitstop: 0,
     // 横版关卡系统
     stage: makeStageRuntime(progress.currentStageId),
@@ -221,7 +221,12 @@ export class Game {
     // 横版关卡：波次、自动推进、跳跃物理（不受 hitstop 影响）
     this.updateStageWaves();
     this.updateAutoAdvance(dt);
-    this.updatePlayerJumpPhysics(dt);
+    // 玩家锁定在地面线上（无跳跃）
+    if (this.state.player.alive) {
+      const stage = this.currentStage();
+      this.state.player.pos.y = getGroundYAt(stage, this.state.player.pos.x);
+      this.state.player.grounded = true;
+    }
 
     if (state.player.alive) {
       this.updatePlayer(dt);
@@ -281,26 +286,12 @@ export class Game {
     const state = this.state;
     const ui = state.ui;
 
-    // Auto-battle toggle
-    if (this.input.consume('v')) {
-      state.autoBattle = !state.autoBattle;
-      this.say(state.autoBattle ? '开启自动战斗' : '关闭自动战斗');
-    }
     if (this.input.consume('h')) state.showHelp = !state.showHelp;
 
     // Toggle bag
     if (this.input.consume('i') || this.input.consume('b')) {
       ui.panel = ui.panel === 'bag' ? 'none' : ui.panel === 'itemDetail' ? 'bag' : 'bag';
       if (ui.panel === 'bag') ui.scroll = 0;
-    }
-
-    // Toggle shop (only near shop)
-    if (this.input.consume('e')) {
-      if (ui.panel === 'shop') {
-        ui.panel = 'none';
-      } else if (dist(state.player.pos, RESPAWN_POS) < C.SHOP_DISTANCE_CLOSE) {
-        ui.panel = 'shop';
-      }
     }
 
     // Toggle talents
@@ -349,19 +340,10 @@ export class Game {
       }
     }
 
-    // Attack
-    if (this.input.consume(' ')) {
-      if (ui.panel === 'itemDetail') {
-        this.useOrEquipItem();
-      } else {
-        this.basicAttack();
-      }
+    // Space: use/equip item (if panel open)
+    if (this.input.consume(' ') && ui.panel === 'itemDetail') {
+      this.useOrEquipItem();
     }
-
-    // Skills
-    if (this.input.consume('1')) this.castSkill(0);
-    if (this.input.consume('2')) this.castSkill(1);
-    if (this.input.consume('3')) this.castSkill(2);
 
     // Navigate inventory grid
     const cols = 4;
@@ -475,7 +457,7 @@ export class Game {
 
   private updatePlayer(dt: number): void {
     const player = this.state.player;
-    // X 轴由 updateAutoAdvance 控制，Y 轴由 updatePlayerJumpPhysics 控制
+    // X 轴由 updateAutoAdvance 控制，Y 轴锁定在地面线
     // 这里只保留冷却、无敌帧、生命回复等非移动逻辑
     player.attackCooldown = Math.max(0, player.attackCooldown - dt);
     for (const skill of this.state.skills) skill.remaining = Math.max(0, skill.remaining - dt);
@@ -570,55 +552,6 @@ export class Game {
     if (player.pos.x >= stage.width - 20) {
       runtime.reachedEnd = true;
     }
-  }
-
-  /** 跳跃物理：重力 + 地面碰撞 */
-  private updatePlayerJumpPhysics(dt: number): void {
-    const player = this.state.player;
-    if (!player.alive) return;
-
-    const stage = this.currentStage();
-    const groundY = getGroundYAt(stage, player.pos.x);
-
-    if (this.input.jumpPressed) {
-      this.tryJump(player);
-      this.input.jumpPressed = false;
-    }
-
-    if (!player.grounded) {
-      player.velY += C.SIDE_SCROLL.GRAVITY * dt;
-      if (player.velY > C.SIDE_SCROLL.MAX_FALL_SPEED) {
-        player.velY = C.SIDE_SCROLL.MAX_FALL_SPEED;
-      }
-    }
-
-    player.pos.y += player.velY * dt;
-
-    if (player.pos.y >= groundY) {
-      player.pos.y = groundY;
-      player.velY = 0;
-      player.grounded = true;
-      player.coyoteTimer = C.SIDE_SCROLL.COYOTE_TIME;
-      player.jumpCount = 0;
-    } else {
-      player.grounded = false;
-      player.coyoteTimer -= dt;
-    }
-  }
-
-  /** 尝试跳跃 */
-  private tryJump(player: Player): void {
-    const canGroundJump = player.grounded || player.coyoteTimer > 0;
-    const canDoubleJump =
-      C.SIDE_SCROLL.DOUBLE_JUMP_ENABLED &&
-      player.jumpCount < player.maxJumpCount;
-
-    if (!canGroundJump && !canDoubleJump) return;
-
-    player.velY = C.SIDE_SCROLL.JUMP_VELOCITY;
-    player.grounded = false;
-    player.coyoteTimer = 0;
-    player.jumpCount += 1;
   }
 
   /* ──────── 通关 / 失败 / 奖励 ──────── */
@@ -945,7 +878,6 @@ export class Game {
       monster.attackCooldown = Math.max(0, monster.attackCooldown - dt);
 
       if (monster.hitstun > 0) continue;
-      if (monster.action) continue;
       if (!player.alive) continue;
 
       const dx = player.pos.x - monster.pos.x;
@@ -953,24 +885,58 @@ export class Game {
 
       monster.facing = { x: dx >= 0 ? 1 : -1, y: 0 };
 
-      const attackRange = C.COMBAT_2D.MONSTER_ATTACK_WIDTH;
+      const contactRange = monster.radius + 20;
 
-      if (absDx > attackRange) {
+      if (absDx > contactRange) {
         const dir = dx > 0 ? 1 : -1;
         monster.pos.x += dir * speed * dt;
-      } else {
-        monster.vel.x = 0;
-        if (monster.attackCooldown <= 0) {
-          monster.action = makeAction('monster', monster.boss ? C.MONSTER_ATTACK_DURATION_BOSS : C.MONSTER_ATTACK_DURATION_NORMAL);
-          monster.attackCooldown = monster.boss
-            ? (monster.enraged ? C.MONSTER_ATTACK_COOLDOWN_BOSS_ENRAGED : C.MONSTER_ATTACK_COOLDOWN_BOSS)
-            : C.MONSTER_ATTACK_COOLDOWN_NORMAL;
-          this.float('!', monster.pos.x, monster.pos.y - monster.radius - 20, monster.boss ? '#ff3150' : '#ffd166');
-        }
+      } else if (monster.attackCooldown <= 0) {
+        // 接触伤害
+        this.applyContactDamage(monster);
+        monster.attackCooldown = monster.boss ? 1.5 : 1.0;
+        // 怪物攻击后短暂后退
+        monster.vel.x = -(dx > 0 ? 1 : -1) * 40;
       }
 
       // 锁定在地面线上
       monster.pos.y = getGroundYAt(stage, monster.pos.x);
+    }
+  }
+
+  /** 怪物接触伤害 */
+  private applyContactDamage(monster: Monster): void {
+    const player = this.state.player;
+    if (!player.alive) return;
+    if (player.invincible) {
+      this.float('MISS', player.pos.x, player.pos.y - 28, 'rgba(255,255,255,0.4)');
+      return;
+    }
+    const dodgeChance = getAffixTotal(this.state.player, 'dodge');
+    if (dodgeChance > 0 && Math.random() * 100 < dodgeChance) {
+      this.float('闪避', player.pos.x, player.pos.y - 28, '#79e07d');
+      return;
+    }
+    const playerStats = totalStats(player);
+    const damage = Math.max(1, monster.attack - playerStats.defense + Math.floor(Math.random() * 6));
+    player.hp -= damage;
+    const thornsPercent = getAffixTotal(this.state.player, 'thorns');
+    if (thornsPercent > 0) {
+      const reflect = Math.max(1, Math.round(damage * thornsPercent / 100));
+      monster.hp -= reflect;
+      this.float(`荆棘-${reflect}`, monster.pos.x, monster.pos.y - monster.radius, '#c57cff');
+      if (monster.hp <= 0) this.killMonster(monster);
+    }
+    player.invincible = true;
+    player.invTimer = C.INVINCIBLE_FRAME_DURATION;
+    this.float(`-${damage}`, player.pos.x, player.pos.y - 28, '#ff6868');
+    this.spawnParticles(player.pos.x, player.pos.y, '#ff6868', monster.boss ? 12 : 6);
+    this.state.shake = Math.min(C.SHAKE_MAX, this.state.shake + (monster.boss ? C.SHAKE_PLAYER_HIT_BOSS : C.SHAKE_PLAYER_HIT_NORMAL));
+    if (player.hp <= 0) {
+      player.hp = 0;
+      player.alive = false;
+      player.invincible = false;
+      player.invTimer = 0;
+      this.say('你倒下了。');
     }
   }
 
@@ -1007,7 +973,6 @@ export class Game {
   private updateAutoCombat(dt: number): void {
     const player = this.state.player;
     if (!player.alive) return;
-    if (this.state.stage.phase === 'running' || this.state.stage.phase === 'idle') return;
 
     player.attackCooldown = Math.max(0, player.attackCooldown - dt);
 
@@ -1059,9 +1024,6 @@ export class Game {
   private updateActions(dt: number): void {
     const player = this.state.player;
     if (player.action) this.advancePlayerAction(player.action, dt);
-    for (const monster of this.state.monsters) {
-      if (monster.action) this.advanceMonsterAction(monster, monster.action, dt);
-    }
   }
 
   private advancePlayerAction(action: AttackAction, dt: number): void {
@@ -1079,21 +1041,6 @@ export class Game {
     }
     if (action.phase === 'strike' && action.timer >= recoveryAt) action.phase = 'recovery';
     if (action.timer >= action.duration) player.action = null;
-  }
-
-  private advanceMonsterAction(monster: Monster, action: AttackAction, dt: number): void {
-    action.timer += dt;
-    const strikeAt = monster.boss ? C.MONSTER_WINDUP_STRIKE_BOSS : C.MONSTER_WINDUP_STRIKE_NORMAL;
-    const recoveryAt = monster.boss ? C.MONSTER_RECOVERY_BOSS : C.MONSTER_RECOVERY_NORMAL;
-    if (action.phase === 'windup' && action.timer >= strikeAt) {
-      action.phase = 'strike';
-      if (!action.resolved && monster.hp > 0) {
-        action.resolved = true;
-        this.resolveMonsterAttack(monster);
-      }
-    }
-    if (action.phase === 'strike' && action.timer >= recoveryAt) action.phase = 'recovery';
-    if (action.timer >= action.duration) monster.action = null;
   }
 
   private updateDrops(dt: number): void {
@@ -1133,33 +1080,12 @@ export class Game {
       slash.ttl -= dt;
       return slash.ttl > 0;
     });
+    // 清理死怪防止数组无限膨胀导致冻结
+    state.monsters = state.monsters.filter((m) => m.hp > 0);
   }
 
   private resolveCollisions(): void {
-    const monsters = this.state.monsters.filter((monster) => monster.hp > 0);
-    for (let i = 0; i < monsters.length; i += 1) {
-      const a = monsters[i];
-      for (let j = i + 1; j < monsters.length; j += 1) {
-        const b = monsters[j];
-        this.separateBodies(a.pos, a.radius, b.pos, b.radius, a.boss ? C.COLLISION_BOSS_WEIGHT : C.COLLISION_ELITE_WEIGHT);
-      }
-      if (this.state.player.alive) this.separateBodies(a.pos, a.radius, this.state.player.pos, 18, C.COLLISION_NORMAL_WEIGHT);
-    }
-  }
-
-  private separateBodies(a: Vec2, ar: number, b: Vec2, br: number, aWeight: number): void {
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const d = Math.max(0.001, Math.hypot(dx, dy));
-    const overlap = ar + br + 4 - d;
-    if (overlap <= 0) return;
-    const nx = dx / d;
-    const ny = dy / d;
-    const bWeight = 1 - aWeight;
-    a.x = clamp(a.x - nx * overlap * bWeight, 20, WORLD.width - 20);
-    a.y = clamp(a.y - ny * overlap * bWeight, 20, WORLD.height - 20);
-    b.x = clamp(b.x + nx * overlap * aWeight, 20, WORLD.width - 20);
-    b.y = clamp(b.y + ny * overlap * aWeight, 20, WORLD.height - 20);
+    // 横版模式：无碰撞体积
   }
 
   private updateUi(dt: number): void {
@@ -1180,34 +1106,6 @@ export class Game {
     if (state.ui.panel === 'shop' && dist(state.player.pos, RESPAWN_POS) >= C.SHOP_DISTANCE_PANEL) {
       state.ui.panel = 'none';
     }
-  }
-
-  private basicAttack(): void {
-    const player = this.state.player;
-    if (!player.alive || player.attackCooldown > 0 || player.action) return;
-    const target = this.nearestLiving(C.PLAYER_BASIC_ATTACK_RANGE);
-    if (!target) {
-      this.say('附近没有可攻击目标。');
-      player.attackCooldown = C.PLAYER_EMPTY_ATTACK_COOLDOWN;
-      return;
-    }
-    player.facing = normalize({ x: target.pos.x - player.pos.x, y: target.pos.y - player.pos.y });
-    player.action = makeAction('basic', C.BASIC_DURATION, target.id);
-    player.attackCooldown = C.PLAYER_ATTACK_COOLDOWN;
-  }
-
-  private castSkill(index: number): void {
-    const skill = this.state.skills[index];
-    if (!skill || skill.remaining > 0 || !this.state.player.alive || this.state.player.action) return;
-    const target = this.nearestLiving(skill.range);
-    if (!target) {
-      this.say(`${skill.name} 范围内没有目标。`);
-      return;
-    }
-    this.state.player.facing = normalize({ x: target.pos.x - this.state.player.pos.x, y: target.pos.y - this.state.player.pos.y });
-    this.state.player.action = makeAction('skill', C.SKILL_DURATION, target.id, index);
-    skill.remaining = skill.cooldown;
-    this.say(`准备 ${skill.name}`);
   }
 
   private resolveBasicAttack(targetId?: string): void {
@@ -1242,49 +1140,6 @@ export class Game {
       if (monster.hp > 0 && dist(monster.pos, target.pos) <= skill.radius) this.hitMonster(monster, effectiveMultiplier, index + 1);
     }
     this.say(`释放 ${skill.name}`);
-  }
-
-  private resolveMonsterAttack(monster: Monster): void {
-    const player = this.state.player;
-    if (!player.alive) return;
-    const reach = monster.radius + C.MONSTER_ATTACK_REACH;
-    if (dist(monster.pos, player.pos) > reach) return;
-    // Invincibility frames — skip damage entirely
-    if (player.invincible) {
-      this.float('MISS', player.pos.x, player.pos.y - 28, 'rgba(255,255,255,0.4)');
-      return;
-    }
-    // 词条: 闪避 (dodge)
-    const dodgeChance = getAffixTotal(this.state.player, 'dodge');
-    if (dodgeChance > 0 && Math.random() * 100 < dodgeChance) {
-      this.float('闪避', player.pos.x, player.pos.y - 28, '#79e07d');
-      return;
-    }
-    const playerStats = totalStats(player);
-    const damage = Math.max(1, monster.attack - playerStats.defense + Math.floor(Math.random() * 6));
-    player.hp -= damage;
-    // 词条: 荆棘 (thorns) — 反弹伤害
-    const thornsPercent = getAffixTotal(this.state.player, 'thorns');
-    if (thornsPercent > 0) {
-      const reflect = Math.max(1, Math.round(damage * thornsPercent / 100));
-      monster.hp -= reflect;
-      this.float(`荆棘-${reflect}`, monster.pos.x, monster.pos.y - monster.radius, '#c57cff');
-      if (monster.hp <= 0) this.killMonster(monster);
-    }
-    // Grant i-frames after being hit
-    player.invincible = true;
-    player.invTimer = C.INVINCIBLE_FRAME_DURATION;
-    this.addSlash(monster.pos, player.pos, monster.boss ? '#ff3150' : '#ffd166', '!');
-    this.float(`-${damage}`, player.pos.x, player.pos.y - 28, '#ff6868');
-    this.spawnParticles(player.pos.x, player.pos.y, '#ff6868', monster.boss ? 16 : 8);
-    this.state.shake = Math.min(C.SHAKE_MAX, this.state.shake + (monster.boss ? C.SHAKE_PLAYER_HIT_BOSS : C.SHAKE_PLAYER_HIT_NORMAL));
-    if (player.hp <= 0) {
-      player.hp = 0;
-      player.alive = false;
-      player.invincible = false;
-      player.invTimer = 0;
-      this.say('你倒下了。按空格或攻击键回城复活。');
-    }
   }
 
   private hitMonster(monster: Monster, multiplier: number, skillIndex: number): void {

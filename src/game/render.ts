@@ -125,7 +125,7 @@ function statValue(key: string, val: number): string {
 
 // ─── Main render ────────────────────────────────────────────────────
 
-export function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, state: GameState, move: { x: number; y: number }): void {
+export function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, state: GameState, _move: { x: number; y: number }): void {
   const w = canvas.width;
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
@@ -142,7 +142,7 @@ export function render(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement,
   drawFloats(ctx, state);
   ctx.restore();
   drawHud(ctx, state, w, h);
-  drawTouchControls(ctx, move, w, h, state);
+  drawTouchControls(ctx, state, w, h);
 }
 
 // ─── World (side-scroll) ────────────────────────────────────────────
@@ -469,15 +469,6 @@ function drawHud(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: 
     : `LV ${player.level}   ATK ${stats.attack}   DEF ${stats.defense}   CRI ${Math.round(stats.crit * 100)}%   LS ${Math.round(stats.lifeSteal * 100)}%`;
   text(ctx, statsStr, 22, compact ? 52 : 80, T2, compact ? 9 : 11);
 
-  // Auto-battle status
-  const autoLabel = state.autoBattle ? 'AUTO ON' : 'AUTO OFF';
-  const autoColor = state.autoBattle ? ACCENT : T3;
-  if (compact) {
-    text(ctx, autoLabel, pw - 8, 36, autoColor, 9, 'right');
-  } else {
-    text(ctx, autoLabel, 280, 52, autoColor, 9, 'left');
-  }
-
   // Version number (bottom right)
   text(ctx, 'v1.1.1', w - 10, h - 18, T3, 10, 'right');
 
@@ -487,11 +478,6 @@ function drawHud(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: 
     text(ctx, stageName, pw - 8, 46, T3, 9, 'right');
   } else {
     text(ctx, stageName, 280, 80, T3, 9, 'left');
-  }
-
-  // Bottom hint — side-scroll controls
-  if (!compact) {
-    text(ctx, 'A/D 移动  SPACE 跳跃/攻击  V 自动  1/2/3 技能  I 背包  S 保存  R 重置', 14, h - 22, T3, 11);
   }
 
   drawSkills(ctx, state, w, h);
@@ -509,25 +495,8 @@ function drawHud(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: 
   if (state.showHelp) drawHelp(ctx, w);
 }
 
-function drawSkills(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
-  const compact = isPortrait(w, h);
-  for (let i = 0; i < state.skills.length; i++) {
-    const skill = state.skills[i];
-    const x = compact ? w / 2 - 40 + i * 40 : w - 240 + i * 76;
-    const y = compact ? h - 58 : h - 56;
-    const size = compact ? 40 : 48;
-    const onCd = skill.remaining > 0;
-
-    ctx.strokeStyle = onCd ? BORDER : skill.color;
-    ctx.lineWidth = onCd ? 0.5 : 1;
-    roundRect(ctx, x - size / 2, y - size / 2, size, size, 8);
-    ctx.stroke();
-    ctx.lineWidth = 1;
-
-    const label = `${i + 1}`;
-    text(ctx, label, x, y - 10, onCd ? T3 : skill.color, compact ? 13 : 15, 'center');
-    text(ctx, onCd ? skill.remaining.toFixed(1) : skill.name.slice(0, 2), x, y + size / 2 + 2, T3, 9, 'center');
-  }
+function drawSkills(_ctx: CanvasRenderingContext2D, _state: GameState, _w: number, _h: number): void {
+  // 技能自动释放，不再显示技能栏
 }
 
 // ─── Bag (grid inventory) ───────────────────────────────────────────
@@ -539,7 +508,7 @@ function drawInventory(ctx: CanvasRenderingContext2D, state: GameState, w: numbe
   const gap = 5;
   const px = compact ? 10 : Math.max(360, w - 360);
   const py = compact ? 100 : 16;
-  const panelW = compact ? w - 20 : 340;
+  const panelW = Math.min(340, w * 0.55);
   const panelH = compact ? Math.min(h - 240, 460) : 440;
 
   panel(ctx, px, py, panelW, panelH, 14);
@@ -806,7 +775,7 @@ function drawItemDetail(ctx: CanvasRenderingContext2D, state: GameState, w: numb
 
 function drawShop(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
   const compact = isPortrait(w, h);
-  const panelW = compact ? w - 24 : 380;
+  const panelW = Math.min(340, w * 0.55);
   const panelH = compact ? 200 : 220;
   const px = compact ? 12 : w / 2 - 190;
   const py = compact ? h / 2 - 100 : h / 2 - 110;
@@ -864,7 +833,7 @@ function drawShop(ctx: CanvasRenderingContext2D, state: GameState, w: number, h:
 
 function drawClassSelect(ctx: CanvasRenderingContext2D, _state: GameState, w: number, h: number): void {
   // Full-screen dim
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
   ctx.fillRect(0, 0, w, h);
 
   // Title
@@ -906,13 +875,13 @@ function drawClassSelect(ctx: CanvasRenderingContext2D, _state: GameState, w: nu
 // ─── Talent Tree ──────────────────────────────────────────────────
 
 function drawTalentTree(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
-  const panelW = Math.min(360, w - 24);
+  const panelW = Math.min(340, w * 0.55);
   const panelH = Math.min(460, h - 80);
   const px = (w - panelW) / 2;
   const py = (h - panelH) / 2;
 
   // Dim background
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
   ctx.fillRect(0, 0, w, h);
 
   // Panel
@@ -1013,7 +982,7 @@ function drawMessages(ctx: CanvasRenderingContext2D, messages: GameMessage[], w:
 }
 
 function drawDeath(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
   ctx.fillRect(0, 0, w, h);
 
   const stage = getStageById(state.stage.stageId);
@@ -1064,7 +1033,7 @@ function drawDeath(ctx: CanvasRenderingContext2D, state: GameState, w: number, h
 // ─── Offline Reward Modal ──────────────────────────────────────────
 
 function drawOfflineRewardModal(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
   ctx.fillRect(0, 0, w, h);
 
   const reward = state.ui.offlineReward;
@@ -1143,7 +1112,7 @@ function drawOfflineRewardModal(ctx: CanvasRenderingContext2D, state: GameState,
 // ─── Stage Clear Panel ─────────────────────────────────────────────
 
 function drawStageClearPanel(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
   ctx.fillRect(0, 0, w, h);
 
   const stage = getStageById(state.stage.stageId);
@@ -1291,7 +1260,7 @@ function drawStageProgressBar(ctx: CanvasRenderingContext2D, state: GameState, w
 // ─── Stage Select ───────────────────────────────────────────────────
 
 function drawStageSelect(ctx: CanvasRenderingContext2D, state: GameState, w: number, h: number): void {
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
   ctx.fillRect(0, 0, w, h);
 
   const panelW = Math.min(400, w - 32);
@@ -1369,61 +1338,16 @@ function drawHelp(ctx: CanvasRenderingContext2D, w: number): void {
 
 // ─── Touch Controls ─────────────────────────────────────────────────
 
-type TouchButton = readonly [string, number, number, number, string];
-
-function drawTouchControls(ctx: CanvasRenderingContext2D, move: { x: number; y: number }, w: number, h: number, state: GameState): void {
-  const compact = isPortrait(w, h);
-
-  // Joystick — smaller in portrait to free up space
-  ctx.globalAlpha = 0.5;
-  const stickSize = compact ? 88 : 110;
-  const stickX = compact ? 12 : 32;
-  const stickY = h - (compact ? 108 : 146);
-
-  ctx.strokeStyle = BORDER_H;
-  ctx.lineWidth = 0.5;
-  roundRect(ctx, stickX, stickY, stickSize, stickSize, 12);
-  ctx.stroke();
-  ctx.lineWidth = 1;
-
-  // Joystick thumb
-  ctx.fillStyle = 'rgba(255,255,255,0.15)';
-  const thumbSize = compact ? 28 : 32;
-  const tx = stickX + stickSize / 2 + move.x * (compact ? 24 : 28) - thumbSize / 2;
-  const ty = stickY + stickSize / 2 + move.y * (compact ? 24 : 28) - thumbSize / 2;
-  roundRect(ctx, tx, ty, thumbSize, thumbSize, 8);
-  ctx.fill();
-
-  // Buttons
-  const rstLabel = state.resetConfirm ? '确认' : 'RST';
-  const rstColor = state.resetConfirm ? WARN : T3;
-  const buttons: TouchButton[] = compact
-    ? [
-        // Attack — bottom right
-        ['ATK', w - 50, h - 50, 34, WARN],
-        // Skills drawn by drawSkills at (w/2-40+i*40, h-58) — touch hit-test in input.ts
-        // Utility row — below minimap at y=112, compact spacing
-        ['BAG', 30, 112, 16, SUCCESS],
-        ['E', 70, 112, 16, GOLD],
-        ['P', 110, 112, 16, WARN],
-        [rstLabel, 150, 112, 16, rstColor],
-        [state.autoBattle ? '自动 ON' : '自动 OFF', 190, 112, 16, state.autoBattle ? ACCENT : T3]
-      ]
-    : [
-        ['1', w - 170, h - 120, 32, '#FF9F0A'],
-        ['2', w - 104, h - 162, 28, ACCENT],
-        ['3', w - 64, h - 96, 28, '#BF5AF2'],
-        ['ATK', w - 108, h - 76, 38, WARN],
-        ['BAG', w - 58, 56, 24, SUCCESS],
-        ['E', w - 116, 56, 24, GOLD],
-        ['USE', w - 174, 56, 24, ACCENT],
-        ['P', w - 232, 56, 24, WARN],
-        [rstLabel, w - 290, 56, 24, rstColor],
-        [state.autoBattle ? 'AUTO ON' : 'AUTO OFF', w - 348, 56, 24, state.autoBattle ? ACCENT : T3]
-      ];
+function drawTouchControls(ctx: CanvasRenderingContext2D, _state: GameState, w: number, _h: number): void {
+  // 极简按钮：背包(I)、药水(P)、重置(R) — 右侧竖排
+  const buttons: [string, number, number, number, string][] = [
+    ['I', w - 30, 110, 18, SUCCESS],
+    ['P', w - 30, 154, 18, WARN],
+    ['R', w - 30, 198, 18, T3],
+  ];
 
   for (const [label, x, y, r, color] of buttons) {
-    ctx.globalAlpha = 0.45;
+    ctx.globalAlpha = 0.4;
     ctx.fillStyle = GLASS;
     roundRect(ctx, x - r, y - r, r * 2, r * 2, r * 0.35);
     ctx.fill();
@@ -1432,8 +1356,8 @@ function drawTouchControls(ctx: CanvasRenderingContext2D, move: { x: number; y: 
     roundRect(ctx, x - r, y - r, r * 2, r * 2, r * 0.35);
     ctx.stroke();
     ctx.lineWidth = 1;
-    ctx.globalAlpha = 0.75;
-    text(ctx, label, x, y - 7, color, label.length > 2 ? 10 : 14, 'center');
+    ctx.globalAlpha = 0.7;
+    text(ctx, label, x, y - 6, color, 12, 'center');
   }
   ctx.globalAlpha = 1;
 }
